@@ -4,11 +4,38 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../app/theme/app_theme.dart';
+import '../../core/constants/report_type_labels.dart';
 import '../../core/services/app_state.dart';
 import '../../core/widgets/common_widgets.dart';
+import '../../domain/enums/hydrant_list_filter.dart';
+
+class _HomeAlert {
+  const _HomeAlert({
+    required this.title,
+    required this.description,
+    required this.date,
+    required this.severity,
+    required this.origin,
+    required this.recommendedAction,
+    this.hydrantId,
+  });
+
+  final String title, description, severity, origin, recommendedAction;
+  final DateTime date;
+  final String? hydrantId;
+}
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
+  static final _returnedAlert = _HomeAlert(
+    title: '1 registro devuelto',
+    description: 'El registro requiere corrección antes de sincronizarse.',
+    date: DateTime(2026, 7, 14, 9, 30),
+    severity: 'Alta',
+    origin: 'Revisión de supervisión',
+    recommendedAction: 'Revisar las observaciones y corregir el registro.',
+    hydrantId: '712',
+  );
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
@@ -45,40 +72,51 @@ class HomePage extends StatelessWidget {
               style: const TextStyle(color: AppColors.muted, fontSize: 12),
             ),
             const SizedBox(height: 16),
-            SectionCard(
-              child: Row(
-                children: [
-                  const CircleAvatar(
-                    backgroundColor: Color(0xFFFFE6E6),
-                    child: Icon(
-                      Icons.warning_amber_rounded,
-                      color: AppColors.red,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+            Semantics(
+              button: true,
+              label: 'Abrir alerta: ${_returnedAlert.title}',
+              child: Card(
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: () => _openAlert(context, state, _returnedAlert),
+                  child: const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Row(
                       children: [
-                        Text(
-                          '1 registro devuelto',
-                          style: TextStyle(
-                            color: Color(0xFFB91C1C),
-                            fontWeight: FontWeight.w700,
+                        CircleAvatar(
+                          backgroundColor: Color(0xFFFFE6E6),
+                          child: Icon(
+                            Icons.warning_amber_rounded,
+                            color: AppColors.red,
                           ),
                         ),
-                        Text(
-                          'Requiere corrección',
-                          style: TextStyle(fontSize: 12, color: AppColors.red),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '1 registro devuelto',
+                                style: TextStyle(
+                                  color: Color(0xFFB91C1C),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              Text(
+                                'Requiere corrección',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.red,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
+                        Icon(Icons.chevron_right, color: AppColors.red),
                       ],
                     ),
                   ),
-                  IconButton(
-                    onPressed: () => context.go('/hydrants'),
-                    icon: const Icon(Icons.chevron_right, color: AppColors.red),
-                  ),
-                ],
+                ),
               ),
             ),
             const SizedBox(height: 16),
@@ -105,7 +143,7 @@ class HomePage extends StatelessWidget {
                   ),
                   const SizedBox(height: 9),
                   const StatusBadge(
-                    'F02-A · En proceso',
+                    '${ReportTypeLabels.visualShort} · En proceso',
                     color: AppColors.teal,
                   ),
                   const SizedBox(height: 12),
@@ -116,10 +154,10 @@ class HomePage extends StatelessWidget {
                     onPressed: () {
                       state.trace(
                         'continue_inspection',
-                        'Continuar inspección F02-A',
+                        'Continuar ${ReportTypeLabels.visualFull}',
                         hydrantId: '2',
                       );
-                      context.push('/inspection/2/a');
+                      context.push('/hydrants/2/inspection/a');
                     },
                     icon: const Icon(Icons.arrow_forward),
                     label: const Text('Continuar'),
@@ -128,7 +166,7 @@ class HomePage extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            const SectionCard(
+            SectionCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -139,21 +177,45 @@ class HomePage extends StatelessWidget {
                   SizedBox(height: 18),
                   Row(
                     children: [
-                      Metric(value: '12', label: 'Asignados'),
                       Metric(
-                        value: '5',
+                        value:
+                            '${state.hydrantCountForFilter(HydrantListFilter.all)}',
+                        label: 'Asignados',
+                        onTap: () =>
+                            _openFilter(context, state, HydrantListFilter.all),
+                      ),
+                      Metric(
+                        value:
+                            '${state.hydrantCountForFilter(HydrantListFilter.completed)}',
                         label: 'Terminados',
                         color: AppColors.green,
+                        onTap: () => _openFilter(
+                          context,
+                          state,
+                          HydrantListFilter.completed,
+                        ),
                       ),
                       Metric(
-                        value: '1',
+                        value:
+                            '${state.hydrantCountForFilter(HydrantListFilter.inProgress)}',
                         label: 'En proceso',
                         color: AppColors.teal,
+                        onTap: () => _openFilter(
+                          context,
+                          state,
+                          HydrantListFilter.inProgress,
+                        ),
                       ),
                       Metric(
-                        value: '2',
+                        value:
+                            '${state.hydrantCountForFilter(HydrantListFilter.synchronizationPending)}',
                         label: 'Sin sinc.',
                         color: AppColors.orange,
+                        onTap: () => _openFilter(
+                          context,
+                          state,
+                          HydrantListFilter.synchronizationPending,
+                        ),
                       ),
                     ],
                   ),
@@ -188,4 +250,95 @@ class HomePage extends StatelessWidget {
       ),
     );
   }
+
+  void _openFilter(
+    BuildContext context,
+    AppState state,
+    HydrantListFilter filter,
+  ) {
+    state.requestHydrantListFilterFromHome(filter);
+    context.go('/hydrants');
+  }
+
+  Future<void> _openAlert(
+    BuildContext context,
+    AppState state,
+    _HomeAlert alert,
+  ) async {
+    final hydrantId = alert.hydrantId;
+    if (hydrantId != null) {
+      final exists = state.hydrants.any((item) => item.id == hydrantId);
+      if (!exists) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('El hidrante ya no está disponible localmente.'),
+          ),
+        );
+        return;
+      }
+      state.requestHydrantListFilterFromHome(HydrantListFilter.all);
+      context.go('/hydrants/$hydrantId');
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(alert.title, style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              Text(alert.description),
+              const SizedBox(height: 16),
+              _AlertDetail(
+                label: 'Fecha',
+                value: DateFormat('dd/MM/yyyy HH:mm').format(alert.date),
+              ),
+              _AlertDetail(label: 'Severidad', value: alert.severity),
+              _AlertDetail(label: 'Origen', value: alert.origin),
+              _AlertDetail(
+                label: 'Acción recomendada',
+                value: alert.recommendedAction,
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(sheetContext),
+                  child: const Text('Cerrar'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AlertDetail extends StatelessWidget {
+  const _AlertDetail({required this.label, required this.value});
+  final String label, value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 128,
+          child: Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+        Expanded(child: Text(value)),
+      ],
+    ),
+  );
 }

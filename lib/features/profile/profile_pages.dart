@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../core/services/app_state.dart';
+import '../../core/services/update_service.dart';
 import '../../core/widgets/common_widgets.dart';
 import '../../domain/enums/app_enums.dart';
 
@@ -133,7 +134,7 @@ class ProfilePage extends StatelessWidget {
                   title: 'Manual de uso',
                   onTap: () {
                     state.trace('manual_open', 'Abrir manual de uso');
-                    context.push('/manual');
+                    context.push('/profile/manual');
                   },
                 ),
                 _Menu(
@@ -142,7 +143,7 @@ class ProfilePage extends StatelessWidget {
                   subtitle: state.updateInfo?.status.name,
                   onTap: () {
                     state.trace('update_check', 'Revisar actualización');
-                    context.push('/update');
+                    context.push('/profile/update');
                   },
                 ),
               ],
@@ -167,7 +168,9 @@ class ProfilePage extends StatelessWidget {
             ),
             onPressed: () async {
               await state.logout();
-              if (context.mounted) context.go('/login');
+              if (context.mounted) {
+                context.go('/login');
+              }
             },
             icon: const Icon(Icons.logout),
             label: const Text('Cerrar sesión'),
@@ -305,7 +308,8 @@ class UpdatePage extends StatelessWidget {
   const UpdatePage({super.key});
   @override
   Widget build(BuildContext context) {
-    final info = context.watch<AppState>().updateInfo;
+    final state = context.watch<AppState>();
+    final info = state.updateInfo;
     final color = info?.status == UpdateStatus.required
         ? AppColors.red
         : info?.status == UpdateStatus.optional
@@ -316,6 +320,67 @@ class UpdatePage extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.violet.withValues(alpha: .09),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: AppColors.violet.withValues(alpha: .25),
+              ),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.science_outlined, color: AppColors.violet),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Modo demostración de actualización',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.violet,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<UpdateDemoScenario>(
+            key: ValueKey(state.updateDemoScenario),
+            initialValue: state.updateDemoScenario,
+            decoration: const InputDecoration(labelText: 'Escenario'),
+            items: const [
+              DropdownMenuItem(
+                value: UpdateDemoScenario.current,
+                child: Text('Aplicación actualizada'),
+              ),
+              DropdownMenuItem(
+                value: UpdateDemoScenario.optional,
+                child: Text('Actualización opcional'),
+              ),
+              DropdownMenuItem(
+                value: UpdateDemoScenario.required,
+                child: Text('Actualización obligatoria'),
+              ),
+              DropdownMenuItem(
+                value: UpdateDemoScenario.error,
+                child: Text('Error de consulta'),
+              ),
+            ],
+            onChanged: (value) {
+              if (value != null) {
+                state.setUpdateScenario(value);
+              }
+            },
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => state.checkConfiguredManifest(),
+            icon: const Icon(Icons.public),
+            label: const Text('Comprobar manifiesto configurado'),
+          ),
+          const SizedBox(height: 12),
           SectionCard(
             child: Column(
               children: [
@@ -330,23 +395,96 @@ class UpdatePage extends StatelessWidget {
                 ),
                 const SizedBox(height: 9),
                 Text(
+                  'Instalada: ${state.versionLabel}',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                if (info != null && info.latestVersion.isNotEmpty)
+                  Text(
+                    'Disponible: ${info.latestVersion}+${info.buildNumber}',
+                    style: TextStyle(color: color, fontWeight: FontWeight.w700),
+                  ),
+                const SizedBox(height: 9),
+                Text(
                   info?.message ?? '',
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: AppColors.muted),
                 ),
                 const SizedBox(height: 14),
                 StatusBadge(info?.status.name ?? 'unavailable', color: color),
+                if (info != null && info.releaseNotes.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Notas: ${info.releaseNotes.join(' · ')}',
+                      style: const TextStyle(color: AppColors.muted),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 const Text(
                   'No se descargan ni instalan paquetes automáticamente. Una actualización obligatoria permite consultar datos locales y sincronizar.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 12, color: AppColors.muted),
                 ),
+                const SizedBox(height: 16),
+                if (info?.status == UpdateStatus.optional)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            state.postponeUpdate();
+                            context.pop();
+                          },
+                          child: const Text('Más tarde'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () => _openDemo(context, state),
+                          child: const Text('Actualizar'),
+                        ),
+                      ),
+                    ],
+                  ),
+                if (info?.status == UpdateStatus.required) ...[
+                  FilledButton(
+                    onPressed: () => _openDemo(context, state),
+                    child: const Text('Actualizar ahora'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => context.push('/sync'),
+                    icon: const Icon(Icons.sync),
+                    label: const Text('Abrir sincronización'),
+                  ),
+                ],
+                if (info?.status == UpdateStatus.unavailable)
+                  FilledButton.icon(
+                    onPressed: () => state.checkUpdates(),
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Reintentar'),
+                  ),
               ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  static Future<void> _openDemo(BuildContext context, AppState state) async {
+    final opened = await state.openUpdate();
+    if (context.mounted && !opened) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'URL de demostración: no se iniciará ninguna descarga.',
+          ),
+        ),
+      );
+    }
   }
 }

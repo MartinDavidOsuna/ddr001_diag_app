@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../app/theme/app_theme.dart';
+import '../../core/constants/report_type_labels.dart';
 import '../../core/services/app_state.dart';
 import '../../core/widgets/common_widgets.dart';
 import '../../domain/models/app_models.dart';
@@ -40,7 +41,7 @@ class _MapPageState extends State<MapPage> {
                   Icon(Icons.gps_fixed, size: 17, color: AppColors.green),
                   SizedBox(width: 6),
                   Text(
-                    'GPS SIMULADO',
+                    'MAPA DEMO · GPS SIMULADO',
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
                   ),
                   SizedBox(width: 14),
@@ -77,13 +78,18 @@ class _MapPageState extends State<MapPage> {
                             ),
                             Legend(
                               color: AppColors.brightBlue,
-                              label: 'F02-A pendiente',
+                              label:
+                                  '${ReportTypeLabels.visualShort} pendiente',
                             ),
                             Legend(
                               color: AppColors.teal,
-                              label: 'F02-A terminado',
+                              label:
+                                  '${ReportTypeLabels.visualShort} terminado',
                             ),
-                            Legend(color: AppColors.violet, label: 'F02-B'),
+                            Legend(
+                              color: AppColors.violet,
+                              label: ReportTypeLabels.functionalShort,
+                            ),
                             Legend(color: AppColors.green, label: 'Validado'),
                           ],
                         ),
@@ -95,16 +101,44 @@ class _MapPageState extends State<MapPage> {
                         top: 70 + h.longitude * (box.maxHeight - 150),
                         child: GestureDetector(
                           onTap: () => setState(() => selected = h),
-                          child: Icon(
-                            Icons.location_on,
-                            size: selected?.id == h.id ? 40 : 32,
-                            color: h.f02b.progress > 0
-                                ? AppColors.violet
-                                : h.f02a.progress == 1
-                                ? AppColors.green
-                                : AppColors.brightBlue,
-                            shadows: const [
-                              Shadow(color: Colors.white, blurRadius: 4),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 5,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xEFFFFFFF),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: AppColors.navy.withValues(
+                                      alpha: .25,
+                                    ),
+                                  ),
+                                ),
+                                child: Text(
+                                  h.displayShortId,
+                                  style: const TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w800,
+                                    color: AppColors.navy,
+                                  ),
+                                ),
+                              ),
+                              Icon(
+                                Icons.location_on,
+                                size: selected?.id == h.id ? 40 : 32,
+                                color: h.f02b.progress > 0
+                                    ? AppColors.violet
+                                    : h.f02a.progress == 1
+                                    ? AppColors.green
+                                    : AppColors.brightBlue,
+                                shadows: const [
+                                  Shadow(color: Colors.white, blurRadius: 4),
+                                ],
+                              ),
                             ],
                           ),
                         ),

@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Capturar evidencia fotográfica de los hidrantes inspeccionados.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Seleccionar evidencia fotográfica durante una inspección.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Registrar la ubicación real del hidrante durante el diagnóstico.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

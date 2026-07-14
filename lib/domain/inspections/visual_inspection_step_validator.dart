@@ -1,0 +1,313 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:hive_ce/hive.dart';
+
+import '../media/inspection_photo.dart';
+import '../media/media_sync_status.dart';
+import 'visual_inspection.dart';
+
+class InspectionValidationError {
+  const InspectionValidationError(this.stepNumber, this.fieldKey, this.message);
+  final int stepNumber;
+  final String fieldKey, message;
+}
+
+class InspectionValidationResult {
+  const InspectionValidationResult(this.errors);
+  final List<InspectionValidationError> errors;
+  bool get isValid => errors.isEmpty;
+}
+
+class VisualInspectionStepValidator {
+  const VisualInspectionStepValidator({
+    required this.photos,
+    required this.damageDocuments,
+  });
+  final List<InspectionPhoto> photos;
+  final Map<String, Map<String, dynamic>> damageDocuments;
+
+  InspectionValidationResult validateStep(VisualInspection value, int step) =>
+      switch (step) {
+        1 => validateIdentification(value),
+        2 => validateLocation(value),
+        3 => validateAccess(value),
+        4 => validateFlowMeter(value),
+        5 => validatePressureValve(value),
+        6 => validateEnergyCommunication(value),
+        7 => validateDamage(value),
+        8 => validatePhotosAndClose(value),
+        _ => const InspectionValidationResult([]),
+      };
+
+  InspectionValidationResult validateAll(VisualInspection value) =>
+      InspectionValidationResult([
+        for (var step = 1; step <= 8; step++)
+          ...validateStep(value, step).errors,
+      ]);
+
+  InspectionValidationResult validateIdentification(VisualInspection value) =>
+      _result(1, {
+        'matchesAssignment': value.identification.matchesAssignment == null
+            ? 'Confirma si corresponde con el hidrante asignado.'
+            : null,
+        'identificationStatus': value.identification.status == null
+            ? 'Selecciona el estado de identificación.'
+            : null,
+        'observedCode':
+            value.identification.matchesAssignment == MatchAnswer.no &&
+                (value.identification.observedCode ?? '').trim().isEmpty
+            ? 'Captura el código observado o una justificación.'
+            : null,
+        'identificationJustification':
+            value.identification.matchesAssignment == MatchAnswer.unknown &&
+                value.identification.comments.trim().isEmpty
+            ? 'Justifica por qué no puede identificarse.'
+            : null,
+        'identificationPhoto': !_hasValidCategory('identificación')
+            ? 'Toma al menos una fotografía de identificación.'
+            : null,
+      });
+
+  InspectionValidationResult validateLocation(VisualInspection value) {
+    final omitted =
+        (value.geoReference.omissionJustification ?? '').trim().isNotEmpty &&
+        value.geoReference.pendingGeoreference &&
+        value.result.supervisorReviewRequired;
+    return _result(2, {
+      'location': !value.geoReference.hasValidPosition && !omitted
+          ? 'Captura una ubicación GPS válida o registra la excepción completa.'
+          : null,
+    });
+  }
+
+  InspectionValidationResult validateAccess(VisualInspection value) =>
+      _result(3, {
+        'accessType': value.access.accessType == null
+            ? 'Selecciona el tipo de acceso.'
+            : null,
+        'roadType': value.access.roadType == null
+            ? 'Selecciona el tipo de camino.'
+            : null,
+        'condition': value.access.condition == null
+            ? 'Selecciona la condición del acceso.'
+            : null,
+        'risks': value.access.risks.isEmpty
+            ? 'Selecciona los riesgos o confirma “Ninguno”.'
+            : null,
+      });
+
+  InspectionValidationResult validateFlowMeter(VisualInspection value) =>
+      _result(4, {
+        'exists': value.flowMeter.exists == null
+            ? 'Indica si existe medidor.'
+            : null,
+        if (value.flowMeter.exists == true)
+          'condition': value.flowMeter.condition == null
+              ? 'Indica la condición del medidor.'
+              : null,
+        if (value.flowMeter.exists == true)
+          'operation': value.flowMeter.operation == null
+              ? 'Indica su funcionamiento aparente.'
+              : null,
+      });
+
+  InspectionValidationResult validatePressureValve(VisualInspection value) =>
+      _result(5, {
+        'exists': value.pressureValve.exists == null
+            ? 'Indica si existe válvula reductora.'
+            : null,
+        if (value.pressureValve.exists == true)
+          'quantity': value.pressureValve.quantity < 1
+              ? 'Indica la cantidad de válvulas.'
+              : null,
+        if (value.pressureValve.exists == true)
+          'condition': value.pressureValve.condition == null
+              ? 'Indica la condición física.'
+              : null,
+        if (value.pressureValve.exists == true)
+          'leakage': (value.pressureValve.leakageLevel ?? '').isEmpty
+              ? 'Indica el nivel de fuga.'
+              : null,
+        if (value.pressureValve.exists == true)
+          'solenoid': value.pressureValve.solenoidExists == null
+              ? 'Indica si existe solenoide.'
+              : null,
+        if (value.pressureValve.solenoidExists == true)
+          'solenoidType': (value.pressureValve.solenoidType ?? '').isEmpty
+              ? 'Indica el tipo de solenoide.'
+              : null,
+      });
+
+  InspectionValidationResult validateEnergyCommunication(
+    VisualInspection value,
+  ) => _result(6, {
+    'energy': value.energyCommunication.energyAvailable == null
+        ? 'Indica si hay energía disponible.'
+        : null,
+    if (value.energyCommunication.energyAvailable == true)
+      'sources': value.energyCommunication.sources.isEmpty
+          ? 'Selecciona al menos una fuente de energía.'
+          : null,
+    if (value.energyCommunication.energyAvailable == true)
+      'voltage': (value.energyCommunication.voltage ?? '').isEmpty
+          ? 'Registra el voltaje observado.'
+          : null,
+    'networks': value.energyCommunication.availableNetworks.isEmpty
+        ? 'Selecciona redes disponibles o “Ninguna”.'
+        : null,
+    'internet': value.energyCommunication.internetAvailable == null
+        ? 'Indica si hay internet disponible.'
+        : null,
+  });
+
+  InspectionValidationResult validateDamage(VisualInspection value) {
+    final errors = <InspectionValidationError>[];
+    if (value.damageIds.isEmpty && !value.noVisibleDamageConfirmed) {
+      errors.add(
+        const InspectionValidationError(
+          7,
+          'noDamage',
+          'Confirma “Sin daños visibles” o registra los daños encontrados.',
+        ),
+      );
+    }
+    if (value.damageIds.isNotEmpty && value.noVisibleDamageConfirmed) {
+      errors.add(
+        const InspectionValidationError(
+          7,
+          'damageConflict',
+          'No puedes confirmar “Sin daños visibles” y registrar daños simultáneamente.',
+        ),
+      );
+    }
+    for (final id in value.damageIds) {
+      final damage = damageDocuments[id] ?? const {};
+      if ((damage['category'] as String? ?? '').isEmpty) {
+        errors.add(
+          const InspectionValidationError(
+            7,
+            'damageCategory',
+            'Un daño no tiene categoría.',
+          ),
+        );
+      }
+      if ((damage['affectedComponent'] as String? ?? '').isEmpty) {
+        errors.add(
+          const InspectionValidationError(
+            7,
+            'damageComponent',
+            'Un daño no tiene componente.',
+          ),
+        );
+      }
+      if ((damage['severity'] as String? ?? '').isEmpty) {
+        errors.add(
+          const InspectionValidationError(
+            7,
+            'damageSeverity',
+            'Un daño no tiene severidad.',
+          ),
+        );
+      }
+      if ((damage['photoIds'] as List? ?? []).isEmpty) {
+        errors.add(
+          const InspectionValidationError(
+            7,
+            'damagePhoto',
+            'Cada daño requiere al menos una fotografía.',
+          ),
+        );
+      }
+    }
+    return InspectionValidationResult(errors);
+  }
+
+  InspectionValidationResult validatePhotosAndClose(VisualInspection value) =>
+      _result(8, {
+        for (final category in _requiredPhotoCategories(value))
+          category: !_hasValidCategory(category)
+              ? 'Falta la fotografía obligatoria de ${_label(category)}.'
+              : null,
+        'classification': value.result.classification == null
+            ? 'Selecciona la clasificación final.'
+            : null,
+        'missingFile':
+            photos.any((p) => !p.isDeleted && !File(p.localPath).existsSync())
+            ? 'Existe una fotografía con archivo local faltante.'
+            : null,
+        'corruptPhoto':
+            photos.any(
+              (p) => !p.isDeleted && (p.fileSize <= 0 || p.sha256.isEmpty),
+            )
+            ? 'Existe una fotografía corrupta o sin integridad.'
+            : null,
+        'processing':
+            photos.any(
+              (p) => const {
+                MediaSyncStatus.captured,
+                MediaSyncStatus.validating,
+                MediaSyncStatus.processing,
+              }.contains(p.syncStatus),
+            )
+            ? 'Espera a que termine el procesamiento fotográfico.'
+            : null,
+      });
+
+  List<String> _requiredPhotoCategories(VisualInspection value) => [
+    'acceso',
+    'panorámica',
+    'vistaGeneral',
+    'identificación',
+    if (value.flowMeter.exists == true) 'medidor',
+    if (value.pressureValve.exists == true) 'válvula',
+    if (value.pressureValve.solenoidExists == true) 'solenoide',
+    if (value.energyCommunication.energyAvailable == true) 'energía',
+    if (value.energyCommunication.availableNetworks.any(
+      (item) => item != 'Ninguna',
+    ))
+      'comunicación',
+  ];
+
+  bool _hasValidCategory(String category) =>
+      photos.any((p) => p.category == category && _counts(p));
+  bool _counts(InspectionPhoto p) =>
+      !p.isDeleted &&
+      File(p.localPath).existsSync() &&
+      p.fileSize > 0 &&
+      p.sha256.isNotEmpty &&
+      const {
+        MediaSyncStatus.storedLocal,
+        MediaSyncStatus.pendingUpload,
+        MediaSyncStatus.uploading,
+        MediaSyncStatus.uploadedUnverified,
+        MediaSyncStatus.verified,
+      }.contains(p.syncStatus);
+  InspectionValidationResult _result(int step, Map<String, String?> fields) =>
+      InspectionValidationResult([
+        for (final entry in fields.entries)
+          if (entry.value != null)
+            InspectionValidationError(step, entry.key, entry.value!),
+      ]);
+  String _label(String value) =>
+      value == 'vistaGeneral' ? 'vista general' : value;
+
+  static VisualInspectionStepValidator fromHive(VisualInspection inspection) {
+    final photoBox = Hive.box<String>('inspection_photos_v1');
+    final damageBox = Hive.box<String>('damage_records_v1');
+    return VisualInspectionStepValidator(
+      photos: [
+        for (final id in inspection.photoIds)
+          if (photoBox.get(id) case final String raw)
+            InspectionPhoto.fromJson(
+              Map<String, dynamic>.from(jsonDecode(raw) as Map),
+            ),
+      ],
+      damageDocuments: {
+        for (final id in inspection.damageIds)
+          if (damageBox.get(id) case final String raw)
+            id: Map<String, dynamic>.from(jsonDecode(raw) as Map),
+      },
+    );
+  }
+}

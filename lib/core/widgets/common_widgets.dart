@@ -78,28 +78,37 @@ class Metric extends StatelessWidget {
     required this.value,
     required this.label,
     this.color = AppColors.ink,
+    this.onTap,
     super.key,
   });
   final String value, label;
   final Color color;
+  final VoidCallback? onTap;
   @override
   Widget build(BuildContext context) => Expanded(
-    child: Column(
-      children: [
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
-            color: color,
-          ),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Column(
+          children: [
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                color: color,
+              ),
+            ),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 11, color: AppColors.muted),
+            ),
+          ],
         ),
-        Text(
-          label,
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 11, color: AppColors.muted),
-        ),
-      ],
+      ),
     ),
   );
 }

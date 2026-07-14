@@ -39,6 +39,7 @@ class Hydrant {
     required this.longitude,
     this.damageCount = 0,
     this.photoCount = 0,
+    this.source = HydrantSource.assigned,
   });
   final String id, code, locality, parcel;
   final PriorityLevel priority;
@@ -47,6 +48,39 @@ class Hydrant {
   final InspectionSummary f02a, f02b;
   final double latitude, longitude;
   final int damageCount, photoCount;
+  final HydrantSource source;
+
+  String get displayShortId {
+    final segments = code.split('-');
+    if (segments.length < 2) return code;
+    final candidate = segments.last.trim();
+    return RegExp(r'^\d+$').hasMatch(candidate) ? candidate : code;
+  }
+
+  Hydrant copyWith({
+    String? locality,
+    String? parcel,
+    PriorityLevel? priority,
+    SyncStatus? syncStatus,
+    HydrantSource? source,
+    InspectionSummary? f02a,
+    InspectionSummary? f02b,
+  }) => Hydrant(
+    id: id,
+    code: code,
+    locality: locality ?? this.locality,
+    parcel: parcel ?? this.parcel,
+    priority: priority ?? this.priority,
+    access: access,
+    syncStatus: syncStatus ?? this.syncStatus,
+    f02a: f02a ?? this.f02a,
+    f02b: f02b ?? this.f02b,
+    latitude: latitude,
+    longitude: longitude,
+    damageCount: damageCount,
+    photoCount: photoCount,
+    source: source ?? this.source,
+  );
 }
 
 class TraceEvent {
@@ -59,10 +93,20 @@ class TraceEvent {
     required this.brigadeName,
     required this.deviceId,
     this.hydrantId,
+    this.inspectionId,
+    this.entityType,
+    this.entityId,
+    this.reason,
+    this.metadata = const {},
+    this.correlationId,
+    this.schemaVersion = 1,
     this.syncStatus = SyncStatus.pending,
   });
   final String id, action, description, userId, brigadeName, deviceId;
   final String? hydrantId;
+  final String? inspectionId, entityType, entityId, reason, correlationId;
+  final Map<String, dynamic> metadata;
+  final int schemaVersion;
   final DateTime createdAt;
   final SyncStatus syncStatus;
   Map<String, dynamic> toJson() => {
@@ -74,6 +118,13 @@ class TraceEvent {
     'brigadeName': brigadeName,
     'deviceId': deviceId,
     'hydrantId': hydrantId,
+    'inspectionId': inspectionId,
+    'entityType': entityType,
+    'entityId': entityId,
+    'reason': reason,
+    'metadata': metadata,
+    'correlationId': correlationId,
+    'schemaVersion': schemaVersion,
     'syncStatus': syncStatus.name,
   };
 }
@@ -86,8 +137,19 @@ class UpdateInfo {
     required this.title,
     required this.message,
     required this.status,
+    this.isRequired = false,
+    this.androidUrl = '',
+    this.iosUrl,
+    this.publishedAt,
+    this.sha256,
+    this.releaseNotes = const [],
   });
   final String latestVersion, minimumSupportedVersion, title, message;
   final int buildNumber;
   final UpdateStatus status;
+  final bool isRequired;
+  final String androidUrl;
+  final String? iosUrl, sha256;
+  final DateTime? publishedAt;
+  final List<String> releaseNotes;
 }
