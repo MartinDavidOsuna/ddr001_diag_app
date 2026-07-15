@@ -70,6 +70,13 @@ class GeoReference {
     this.capturedBy,
     this.omissionJustification,
     this.pendingGeoreference = false,
+    this.captureStatus = 'notStarted',
+    this.technicalFailureReason,
+    this.technicalMessage,
+    this.captureAttempts = 0,
+    this.permissionStatus,
+    this.locationServiceEnabled,
+    this.provider,
     this.comments = '',
   });
   final double? latitude,
@@ -79,8 +86,16 @@ class GeoReference {
       elevation,
       horizontalAccuracy,
       verticalAccuracy;
-  final String? utmZone, capturedBy, omissionJustification;
-  final String datum, comments;
+  final String? utmZone,
+      capturedBy,
+      omissionJustification,
+      technicalFailureReason,
+      technicalMessage,
+      permissionStatus,
+      provider;
+  final String datum, comments, captureStatus;
+  final int captureAttempts;
+  final bool? locationServiceEnabled;
   final RtkStatus rtkStatus;
   final DateTime? capturedAt;
   final bool pendingGeoreference;
@@ -107,6 +122,13 @@ class GeoReference {
     'omissionJustification': omissionJustification,
     'pendingGeoreference': pendingGeoreference,
     'comments': comments,
+    'captureStatus': captureStatus,
+    'technicalFailureReason': technicalFailureReason,
+    'technicalMessage': technicalMessage,
+    'captureAttempts': captureAttempts,
+    'permissionStatus': permissionStatus,
+    'locationServiceEnabled': locationServiceEnabled,
+    'provider': provider,
   };
   factory GeoReference.fromJson(Map<String, dynamic> j) => GeoReference(
     latitude: (j['latitude'] as num?)?.toDouble(),
@@ -123,6 +145,13 @@ class GeoReference {
     capturedBy: j['capturedBy'] as String?,
     omissionJustification: j['omissionJustification'] as String?,
     pendingGeoreference: j['pendingGeoreference'] as bool? ?? false,
+    captureStatus: j['captureStatus'] as String? ?? 'notStarted',
+    technicalFailureReason: j['technicalFailureReason'] as String?,
+    technicalMessage: j['technicalMessage'] as String?,
+    captureAttempts: j['captureAttempts'] as int? ?? 0,
+    permissionStatus: j['permissionStatus'] as String?,
+    locationServiceEnabled: j['locationServiceEnabled'] as bool?,
+    provider: j['provider'] as String?,
     comments: j['comments'] as String? ?? '',
   );
 }
@@ -271,6 +300,7 @@ class PressureValveAssessment {
 class EnergyCommunicationAssessment {
   const EnergyCommunicationAssessment({
     this.energyAvailable,
+    this.energyAvailabilityAnswer,
     this.sources = const [],
     this.voltage,
     this.nearbyPole,
@@ -280,14 +310,22 @@ class EnergyCommunicationAssessment {
     this.signalStrength,
     this.modemStatus,
     this.internetAvailable,
+    this.internetAvailabilityAnswer,
     this.comments = '',
+    this.networkDiagnostics = const {},
+    this.cellularDiagnostic = const {},
+    this.wifiAssessment = const {},
   });
   final bool? energyAvailable, nearbyPole, transformerExists, internetAvailable;
+  final MatchAnswer? energyAvailabilityAnswer, internetAvailabilityAnswer;
   final List<String> sources, availableNetworks;
   final String? voltage, transformerCapacity, signalStrength, modemStatus;
   final String comments;
+  final Map<String, dynamic> networkDiagnostics;
+  final Map<String, dynamic> cellularDiagnostic, wifiAssessment;
   Map<String, dynamic> toJson() => {
     'energyAvailable': energyAvailable,
+    'energyAvailabilityAnswer': energyAvailabilityAnswer?.name,
     'sources': sources,
     'voltage': voltage,
     'nearbyPole': nearbyPole,
@@ -297,11 +335,24 @@ class EnergyCommunicationAssessment {
     'signalStrength': signalStrength,
     'modemStatus': modemStatus,
     'internetAvailable': internetAvailable,
+    'internetAvailabilityAnswer': internetAvailabilityAnswer?.name,
     'comments': comments,
+    'networkDiagnostics': networkDiagnostics,
+    'cellularDiagnostic': cellularDiagnostic,
+    'wifiAssessment': wifiAssessment,
   };
   factory EnergyCommunicationAssessment.fromJson(Map<String, dynamic> j) =>
       EnergyCommunicationAssessment(
         energyAvailable: j['energyAvailable'] as bool?,
+        energyAvailabilityAnswer: _enumOrNull(
+          MatchAnswer.values,
+          j['energyAvailabilityAnswer'] ??
+              ((j['energyAvailable'] as bool?) == true
+                  ? 'yes'
+                  : (j['energyAvailable'] as bool?) == false
+                  ? 'no'
+                  : null),
+        ),
         sources: (j['sources'] as List? ?? []).cast<String>(),
         voltage: j['voltage'] as String?,
         nearbyPole: j['nearbyPole'] as bool?,
@@ -312,7 +363,25 @@ class EnergyCommunicationAssessment {
         signalStrength: j['signalStrength'] as String?,
         modemStatus: j['modemStatus'] as String?,
         internetAvailable: j['internetAvailable'] as bool?,
+        internetAvailabilityAnswer: _enumOrNull(
+          MatchAnswer.values,
+          j['internetAvailabilityAnswer'] ??
+              ((j['internetAvailable'] as bool?) == true
+                  ? 'yes'
+                  : (j['internetAvailable'] as bool?) == false
+                  ? 'no'
+                  : null),
+        ),
         comments: j['comments'] as String? ?? '',
+        networkDiagnostics: Map<String, dynamic>.from(
+          j['networkDiagnostics'] as Map? ?? const {},
+        ),
+        cellularDiagnostic: Map<String, dynamic>.from(
+          j['cellularDiagnostic'] as Map? ?? const {},
+        ),
+        wifiAssessment: Map<String, dynamic>.from(
+          j['wifiAssessment'] as Map? ?? const {},
+        ),
       );
 }
 
@@ -382,6 +451,7 @@ class VisualInspection {
     this.result = const VisualInspectionResult(),
     this.closureComments = '',
     this.noVisibleDamageConfirmed = false,
+    this.damageAssessments = const {},
   });
   final String id,
       hydrantId,
@@ -394,6 +464,7 @@ class VisualInspection {
       updatedBy,
       closureComments;
   final bool noVisibleDamageConfirmed;
+  final Map<String, Map<String, dynamic>> damageAssessments;
   final String? assignmentId;
   final HydrantSource source;
   final InspectionStatus status;
@@ -425,6 +496,7 @@ class VisualInspection {
     VisualInspectionResult? result,
     String? closureComments,
     bool? noVisibleDamageConfirmed,
+    Map<String, Map<String, dynamic>>? damageAssessments,
   }) => VisualInspection(
     id: id,
     hydrantId: hydrantId,
@@ -456,6 +528,7 @@ class VisualInspection {
     closureComments: closureComments ?? this.closureComments,
     noVisibleDamageConfirmed:
         noVisibleDamageConfirmed ?? this.noVisibleDamageConfirmed,
+    damageAssessments: damageAssessments ?? this.damageAssessments,
   );
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -487,6 +560,7 @@ class VisualInspection {
     'result': result.toJson(),
     'closureComments': closureComments,
     'noVisibleDamageConfirmed': noVisibleDamageConfirmed,
+    'damageAssessments': damageAssessments,
   };
   factory VisualInspection.fromJson(Map<String, dynamic> j) => VisualInspection(
     id: j['id'] as String,
@@ -536,6 +610,12 @@ class VisualInspection {
     ),
     closureComments: j['closureComments'] as String? ?? '',
     noVisibleDamageConfirmed: j['noVisibleDamageConfirmed'] as bool? ?? false,
+    damageAssessments: {
+      for (final entry in Map<String, dynamic>.from(
+        j['damageAssessments'] as Map? ?? const {},
+      ).entries)
+        entry.key: Map<String, dynamic>.from(entry.value as Map? ?? const {}),
+    },
   );
 }
 

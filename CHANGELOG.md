@@ -4,6 +4,10 @@ Todos los cambios notables de **DIAGNOSTICO HIDRANTES** se documentan aquí.
 
 ## Unreleased — Etapa 3
 
+- Diagnóstico automático limitado a GPRS/red celular, con contador máximo de 60 segundos y resultados diferenciados.
+- Evaluación Wi-Fi manual mediante respuestas explícitas, sin escaneo de redes ni permisos adicionales.
+- Etapa 4 inicia estabilización local: respuestas trivalentes RV persistentes, ubicación automática, diagnóstico de red parcial honesto, resolución central de RV finalizado, navegación RF y traducciones visibles.
+- Evidencia por sección incorpora contador reutilizable y daños visibles incorpora evaluación individual por componente.
 - Inicio recupera el Resumen de jornada compacto de cuatro métricas con reglas compartidas con Hidrantes.
 - La alerta de Inicio ahora responde en toda su superficie y abre detalle o ficha según su relación.
 - La barra principal se simplifica a Todos, RV, RF, En proceso, Sin sincronizar y Finalizado.

@@ -16,9 +16,9 @@ import '../../core/persistence/versioned_json_codec.dart';
 import '../../core/services/app_state.dart';
 import '../../core/widgets/common_widgets.dart';
 import '../../data/catalogs/functional_catalogs.dart';
+import '../../data/local/completed_visual_report_resolver.dart';
 import '../../domain/functional/functional_models.dart';
 import '../../domain/enums/app_enums.dart';
-import '../../domain/inspections/visual_inspection.dart';
 import '../../domain/media/inspection_photo.dart';
 import 'calculation/functional_result_engine.dart';
 
@@ -122,22 +122,21 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
     FunctionalInspection value,
     AppState state,
   ) async {
-    final candidates = <VisualInspection>[];
-    for (final raw in Hive.box<String>('visual_inspections_v1').values) {
-      try {
-        final visual = VisualInspection.fromJson(
-          VersionedJsonCodec.decode(raw).payload,
-        );
-        if (visual.hydrantId == value.hydrantId) candidates.add(visual);
-      } on Object {
-        continue;
-      }
-    }
-    if (candidates.isEmpty) {
-      final hydrant = state.hydrant(value.hydrantId);
+    final hydrant = state.hydrant(value.hydrantId);
+    final resolution = CompletedVisualReportResolver(
+      state.visualInspectionRepository,
+    ).findLatestCompletedForHydrant(hydrant);
+    final visual = resolution.report;
+    if (visual == null) {
       final updated = value.copyWith(
+        visualInspectionId: resolution.reportId,
         stepData: {
           ...value.stepData,
+          if (resolution.found)
+            'inheritedVisualInspectionId': resolution.reportId,
+          if (resolution.source ==
+              CompletedVisualResolutionSource.legacyProjection)
+            'inheritedVisualSource': 'legacyProjection',
           'functionalObservedCode': hydrant.code,
           'functionalLatitude': '${hydrant.latitude}',
           'functionalLongitude': '${hydrant.longitude}',
@@ -146,8 +145,6 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
       await state.functionalInspectionRepository.save(updated);
       return updated;
     }
-    candidates.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    final visual = candidates.first;
     final now = DateTime.now().toUtc();
     final inherited = <String, dynamic>{
       ...value.stepData,
@@ -800,7 +797,7 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
       return;
     }
     await _save();
-    if (mounted) context.pop();
+    if (mounted) context.go('/hydrants/${widget.hydrantId}');
   }
 
   Future<void> _suspend() async {

@@ -69,3 +69,9 @@ Implementado parcialmente: la interfaz captura y persiste una prueba por tipo al
 Simulado por decisión de alcance: telemetría, Modbus y actuación remota. Sus contratos manuales/mock no abren conexiones ni envían comandos reales. La sincronización sigue siendo una cola local simulada; no existe backend remoto.
 
 Pendiente de validación manual: cámara y recuperación tras interrupción en dispositivo, rotación con autocentrado de filtros, consistencia de contadores con datos reales, persistencia tras cierre forzado, integridad de fotografías y ciclo completo de sincronización simulada. No se agregaron pruebas automatizadas conforme a la restricción de la etapa.
+
+## Correcciones de estabilización Etapa 4
+
+RF resuelve el último REPORTE VISUAL finalizado mediante `CompletedVisualReportResolver`. La consulta usa el identificador canónico, ignora borradores y conserva un fallback tipado para proyecciones demo heredadas que no poseen documento RV. El caso del hidrante 1104 se cubre por esta regla general, sin excepciones por código.
+
+En el primer paso, Atrás guarda el borrador y navega explícitamente a la ficha. Esto evita reinterceptar `context.pop()` dentro de `PopScope(canPop: false)`.

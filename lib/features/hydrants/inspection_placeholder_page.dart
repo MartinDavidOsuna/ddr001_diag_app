@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -9,17 +10,23 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../core/constants/report_type_labels.dart';
+import '../../core/constants/report_status_labels.dart';
 import '../../core/location/coordinate_conversion_service.dart';
 import '../../core/location/location_service.dart';
 import '../../core/media/reliable_photo_service.dart';
 import '../../core/services/app_state.dart';
 import '../../core/widgets/common_widgets.dart';
 import '../../data/catalogs/f02a_catalogs.dart';
+import '../../data/catalogs/damage_component_catalog.dart';
+import '../../data/services/cellular_network_diagnostics_controller.dart';
 import '../../domain/enums/app_enums.dart';
 import '../../domain/inspections/visual_inspection.dart';
 import '../../domain/inspections/visual_inspection_step_validator.dart';
 import '../../domain/media/inspection_photo.dart';
+import '../shared/section_photo_counter.dart';
 import '../../domain/media/media_sync_status.dart';
+import '../../domain/network/cellular_network_diagnostic.dart';
+import '../../domain/network/wifi_technical_assessment.dart';
 import '../../domain/functional/functional_models.dart';
 
 class InspectionPlaceholderPage extends StatefulWidget {
@@ -37,6 +44,8 @@ class InspectionPlaceholderPage extends StatefulWidget {
 class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
   VisualInspection? inspection;
   bool loading = true, dirty = false, saving = false;
+  bool locationCaptureRunning = false;
+  CellularNetworkDiagnosticsController? _cellularController;
   String? error;
   List<InspectionValidationError> validationErrors = [];
   final ScrollController _scrollController = ScrollController();
@@ -55,6 +64,11 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
 
   @override
   void dispose() {
+    if (_cellularController?.isRunning == true) {
+      unawaited(_cellularController!.cancel(interrupted: true));
+    }
+    _cellularController?.removeListener(_onCellularChanged);
+    _cellularController?.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -85,6 +99,8 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
         inspection = value;
         loading = false;
       });
+      _scheduleAutomaticLocationIfNeeded();
+      _scheduleCellularDiagnosticsIfNeeded();
     }
   }
 
@@ -104,6 +120,18 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
       error = null;
       validationErrors = [];
     });
+    if (key == 'matchesAssignment' ||
+        key == 'energyAvailabilityAnswer' ||
+        key == 'wifiAssessment') {
+      context.read<AppState>().trace(
+        'visual_answer_changed',
+        'Respuesta actualizada en REPORTE VISUAL',
+        hydrantId: widget.hydrantId,
+        entityType: section,
+        entityId: key,
+        metadata: {'value': value},
+      );
+    }
   }
 
   Future<void> _save({int? nextStep}) async {
@@ -124,7 +152,79 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
         dirty = false;
         saving = false;
       });
+      _scheduleAutomaticLocationIfNeeded();
+      _scheduleCellularDiagnosticsIfNeeded();
     }
+  }
+
+  void _scheduleAutomaticLocationIfNeeded() {
+    if (inspection?.currentStep != 2 ||
+        inspection!.geoReference.hasValidPosition ||
+        locationCaptureRunning) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && inspection?.currentStep == 2) _captureLocation();
+    });
+  }
+
+  void _scheduleCellularDiagnosticsIfNeeded() {
+    if (inspection?.currentStep != 6) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || inspection?.currentStep != 6) return;
+      _ensureCellularController();
+      if (_cellularController!.diagnostic.status ==
+          CellularDiagnosticStatus.idle) {
+        unawaited(_cellularController!.start());
+      }
+    });
+  }
+
+  void _ensureCellularController() {
+    if (_cellularController != null) return;
+    final stored = inspection!.energyCommunication.cellularDiagnostic;
+    var restored = stored.isEmpty
+        ? null
+        : CellularNetworkDiagnostic.fromJson(stored);
+    if (restored?.isRunning == true) {
+      restored = restored!.copyWith(
+        status: CellularDiagnosticStatus.cancelled,
+        stage: CellularDiagnosticStage.completed,
+        completedAt: DateTime.now().toUtc(),
+        errorCode: 'interrupted',
+        errorMessage: 'El diagnóstico anterior quedó interrumpido.',
+        internetStatus: CellularInternetStatus.cancelled,
+        progress: 1,
+      );
+    }
+    _cellularController = CellularNetworkDiagnosticsController(
+      inspectionId: inspection!.id,
+      restored: restored,
+      persist: _persistCellularDiagnostic,
+    )..addListener(_onCellularChanged);
+  }
+
+  void _onCellularChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _persistCellularDiagnostic(
+    CellularNetworkDiagnostic diagnostic,
+  ) async {
+    if (!mounted || inspection == null) return;
+    _setSectionValue(
+      'energyCommunication',
+      'cellularDiagnostic',
+      diagnostic.toJson(),
+    );
+    final state = context.read<AppState>();
+    await state.visualInspectionRepository.save(inspection!);
+    await state.trace(
+      'cellular_diagnostic_${diagnostic.status.name}',
+      'Diagnóstico de red GPRS: ${diagnostic.status.name}',
+      hydrantId: widget.hydrantId,
+      metadata: diagnostic.toJson(),
+    );
   }
 
   Future<void> _back() async {
@@ -323,6 +423,13 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
                       inspection: value,
                       setValue: _setSectionValue,
                       captureLocation: _captureLocation,
+                      cellularDiagnostic: _cellularController?.diagnostic,
+                      startCellularDiagnostic: () {
+                        _ensureCellularController();
+                        unawaited(_cellularController!.start());
+                      },
+                      cancelCellularDiagnostic: () =>
+                          unawaited(_cellularController?.cancel()),
                       capturePhoto: _capturePhoto,
                       deletePhoto: _deletePhoto,
                     ),
@@ -381,9 +488,20 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
   }
 
   Future<void> _captureLocation() async {
+    if (locationCaptureRunning) return;
     final state = context.read<AppState>();
+    final attempts = inspection!.geoReference.captureAttempts + 1;
+    final initial = inspection!.toJson();
+    initial['geoReference'] = {
+      ...Map<String, dynamic>.from(initial['geoReference'] as Map),
+      'captureStatus': 'searching',
+      'captureAttempts': attempts,
+      'technicalFailureReason': null,
+      'technicalMessage': null,
+    };
     setState(() {
-      saving = true;
+      locationCaptureRunning = true;
+      inspection = VisualInspection.fromJson(initial);
       error = null;
     });
     try {
@@ -406,25 +524,80 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
         'utmNorth': utm.northing,
         'utmZone': utm.zone,
         'rtkStatus': RtkStatus.unavailable.name,
+        'captureStatus': position.accuracy <= 50 ? 'obtained' : 'poorAccuracy',
+        'captureAttempts': attempts,
+        'permissionStatus': 'granted',
+        'locationServiceEnabled': true,
+        'provider': 'platformLocationProvider',
+        'technicalFailureReason': position.accuracy <= 50
+            ? null
+            : LocationFailureReason.poorAccuracy.name,
+        'technicalMessage': position.accuracy <= 50
+            ? null
+            : 'Se conservó la mejor lectura, pero su precisión es insuficiente.',
       };
       setState(() {
         inspection = VisualInspection.fromJson(json);
         dirty = true;
-        saving = false;
+        locationCaptureRunning = false;
       });
       await state.trace(
         'location_captured',
         'Ubicación GPS real capturada',
         hydrantId: widget.hydrantId,
       );
-    } catch (e) {
+    } on LocationCaptureException catch (e) {
+      final json = inspection!.toJson();
+      json['geoReference'] = {
+        ...Map<String, dynamic>.from(json['geoReference'] as Map),
+        'captureStatus': 'unavailable',
+        'technicalFailureReason': e.reason.name,
+        'technicalMessage': e.message,
+        'captureAttempts': attempts,
+        'permissionStatus': e.permissionStatus,
+        'locationServiceEnabled': e.serviceEnabled,
+        'capturedAt': DateTime.now().toUtc().toIso8601String(),
+        'pendingGeoreference': true,
+      };
       if (mounted) {
         setState(() {
-          error = '$e';
-          saving = false;
+          inspection = VisualInspection.fromJson(json);
+          error = e.message;
+          locationCaptureRunning = false;
+          dirty = true;
         });
       }
-      await state.trace('location_error', '$e', hydrantId: widget.hydrantId);
+      await state.trace(
+        'location_error',
+        e.message,
+        hydrantId: widget.hydrantId,
+        metadata: {'reason': e.reason.name, 'attempt': attempts},
+      );
+    } catch (e) {
+      final json = inspection!.toJson();
+      json['geoReference'] = {
+        ...Map<String, dynamic>.from(json['geoReference'] as Map),
+        'captureStatus': 'unavailable',
+        'technicalFailureReason': LocationFailureReason.platformError.name,
+        'technicalMessage': '$e',
+        'captureAttempts': attempts,
+        'capturedAt': DateTime.now().toUtc().toIso8601String(),
+        'pendingGeoreference': true,
+      };
+      if (mounted) {
+        setState(() {
+          inspection = VisualInspection.fromJson(json);
+          error = 'Ubicación no disponible por un error de plataforma.';
+          locationCaptureRunning = false;
+          dirty = true;
+        });
+      }
+      await state.trace(
+        'location_error',
+        'Error de plataforma al capturar ubicación',
+        hydrantId: widget.hydrantId,
+        metadata: {'reason': LocationFailureReason.platformError.name},
+      );
     }
   }
 
@@ -529,7 +702,7 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
         content: Text(
           'Hidrante: ${state.hydrant(widget.hydrantId).code}\n'
           'Fecha: ${completed.completedAt?.toLocal()}\n'
-          'Clasificación: ${completed.result.classification?.name ?? 'Sin clasificación'}\n'
+          'Clasificación: ${ReportResultLabels.visual(completed.result.classification)}\n'
           'Fotografías: ${completed.photoIds.length}\n'
           'Estado: pendiente de sincronización\n'
           'Requiere ${ReportTypeLabels.functionalFull}: ${completed.result.requiresTechnicalInspection ? 'Sí' : 'No'}',
@@ -600,17 +773,222 @@ class _ValidationSummary extends StatelessWidget {
 
 typedef SetValue = void Function(String section, String key, Object? value);
 
+class _CellularDiagnosticsPanel extends StatelessWidget {
+  const _CellularDiagnosticsPanel({
+    required this.diagnostic,
+    required this.onStart,
+    required this.onCancel,
+  });
+  final CellularNetworkDiagnostic? diagnostic;
+  final VoidCallback onStart, onCancel;
+
+  String _stageLabel(String value) => switch (value) {
+    'preparing' => 'Preparando análisis',
+    'checkingPermissions' => 'Revisando permisos',
+    'checkingCellularInterface' => 'Comprobando interfaz celular',
+    'waitingForRegistration' => 'Esperando registro en red',
+    'analyzingSignal' => 'Analizando señal disponible',
+    'checkingCellularConnectivity' => 'Verificando conectividad celular',
+    'calculatingResult' => 'Calculando resultado',
+    'completed' => 'Diagnóstico completado',
+    'partial' => 'Diagnóstico parcial',
+    _ => 'Diagnóstico no disponible',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final value = diagnostic;
+    final running = value?.isRunning ?? false;
+    final remaining = value?.remainingSeconds ?? 60;
+    final minutes = (remaining ~/ 60).toString().padLeft(2, '0');
+    final seconds = (remaining % 60).toString().padLeft(2, '0');
+    final result = switch (value?.status) {
+      CellularDiagnosticStatus.available => 'Red celular disponible',
+      CellularDiagnosticStatus.noCellularNetworksAvailable =>
+        'No hay redes celulares disponibles',
+      CellularDiagnosticStatus.indeterminate ||
+      CellularDiagnosticStatus.failed =>
+        'No se pudo completar el diagnóstico de red celular',
+      CellularDiagnosticStatus.cancelled => 'Diagnóstico cancelado',
+      _ => 'Análisis pendiente',
+    };
+    return SectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Diagnóstico de red GPRS',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 8),
+          if (running)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 8),
+                  Text('Analizando disponibilidad de red celular'),
+                ],
+              ),
+            ),
+          LinearProgressIndicator(value: value?.progress ?? 0),
+          const SizedBox(height: 6),
+          Text(_stageLabel(value?.stage.name ?? 'preparing')),
+          if (running) Text('Tiempo restante: $minutes:$seconds'),
+          Text(result, style: const TextStyle(fontWeight: FontWeight.w700)),
+          Text('Operador: ${value?.operatorName ?? 'No se pudo determinar'}'),
+          Text(
+            'Tecnología: ${value?.networkTechnology ?? 'No se pudo determinar'}',
+          ),
+          Text(
+            'Internet mediante GPRS: ${switch (value?.internetStatus) {
+              CellularInternetStatus.available => 'Disponible',
+              CellularInternetStatus.unavailable => 'No disponible',
+              CellularInternetStatus.indeterminate => 'No se pudo determinar',
+              CellularInternetStatus.cancelled => 'Diagnóstico cancelado',
+              _ => 'Análisis pendiente',
+            }}',
+          ),
+          Text(
+            'Calidad: ${value?.qualityScore == null ? 'No calculable' : '${value!.qualityScore}/10 · ${value.qualityLabel}'}',
+          ),
+          Text(
+            'Efectividad de la conexión GPRS: ${value?.effectivenessPercentage == null ? 'No calculable' : '${value!.effectivenessPercentage!.toStringAsFixed(0)} %'}',
+          ),
+          Text('Tiempo utilizado: ${value?.elapsedSeconds ?? 0} s'),
+          const Text(
+            'Metodología DEMO. La API actual observa la interfaz celular del teléfono; no sustituye una prueba del módem del hidrante.',
+            style: TextStyle(fontSize: 11, color: AppColors.orange),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: running ? onCancel : onStart,
+              icon: Icon(running ? Icons.stop_circle_outlined : Icons.refresh),
+              label: Text(running ? 'Cancelar análisis' : 'Repetir análisis'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AutomaticLocationPanel extends StatelessWidget {
+  const _AutomaticLocationPanel({required this.geo, required this.onRetry});
+  final GeoReference geo;
+  final VoidCallback onRetry;
+
+  String get status => switch (geo.captureStatus) {
+    'searching' => 'Buscando ubicación',
+    'obtained' => 'Ubicación obtenida',
+    'poorAccuracy' => 'Precisión insuficiente',
+    'unavailable' => 'Ubicación no disponible',
+    _ => 'Preparando captura automática',
+  };
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      SectionCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                if (geo.captureStatus == 'searching')
+                  const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  Icon(
+                    geo.hasValidPosition
+                        ? Icons.location_on
+                        : Icons.location_off_outlined,
+                  ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    status,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                if (geo.captureStatus != 'searching')
+                  IconButton(
+                    tooltip: 'Reintentar captura automática',
+                    onPressed: onRetry,
+                    icon: const Icon(Icons.refresh),
+                  ),
+              ],
+            ),
+            Text('Captura automática · Intentos: ${geo.captureAttempts}'),
+            if (geo.technicalMessage != null) Text(geo.technicalMessage!),
+          ],
+        ),
+      ),
+      const SizedBox(height: 10),
+      Container(
+        height: 180,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: const Color(0xFFE8F1F5),
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            const Icon(Icons.map_outlined, size: 100, color: AppColors.muted),
+            if (geo.hasValidPosition)
+              const Icon(Icons.location_pin, size: 48, color: AppColors.red),
+            const Positioned(
+              left: 8,
+              bottom: 6,
+              child: Text(
+                'Representación local; sin mapa SDK interactivo',
+                style: TextStyle(fontSize: 10),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 8),
+      SectionCard(
+        child: Text(
+          'Latitud: ${geo.latitude?.toStringAsFixed(6) ?? 'No disponible'}\n'
+          'Longitud: ${geo.longitude?.toStringAsFixed(6) ?? 'No disponible'}\n'
+          'UTM: ${geo.utmZone ?? 'No disponible'} ${geo.utmEast?.toStringAsFixed(2) ?? ''} ${geo.utmNorth?.toStringAsFixed(2) ?? ''}\n'
+          'Elevación: ${geo.elevation?.toStringAsFixed(1) ?? 'No disponible'} m\n'
+          'Precisión: ${geo.horizontalAccuracy?.toStringAsFixed(1) ?? 'No disponible'} m\n'
+          'Fecha: ${geo.capturedAt?.toLocal() ?? 'No disponible'}\n'
+          'Estado: $status',
+        ),
+      ),
+    ],
+  );
+}
+
 class _StepBody extends StatelessWidget {
   const _StepBody({
     required this.inspection,
     required this.setValue,
     required this.captureLocation,
+    required this.cellularDiagnostic,
+    required this.startCellularDiagnostic,
+    required this.cancelCellularDiagnostic,
     required this.capturePhoto,
     required this.deletePhoto,
   });
   final VisualInspection inspection;
   final SetValue setValue;
   final VoidCallback captureLocation;
+  final CellularNetworkDiagnostic? cellularDiagnostic;
+  final VoidCallback startCellularDiagnostic, cancelCellularDiagnostic;
   final void Function(String category, ImageSource source) capturePhoto;
   final Future<void> Function(InspectionPhoto photo) deletePhoto;
 
@@ -670,31 +1048,22 @@ class _StepBody extends StatelessWidget {
               ),
             ],
           ),
+          Builder(
+            builder: (context) {
+              final photos = _photosFor('identificación');
+              return SectionPhotoCounter(
+                photos: photos,
+                requiredEvidence: true,
+                onOpen: () =>
+                    _openCategoryPhotos(context, 'identificación', photos),
+              );
+            },
+          ),
         ]);
       case 2:
         final geo = inspection.geoReference;
         children.addAll([
-          FilledButton.icon(
-            onPressed: captureLocation,
-            icon: const Icon(Icons.my_location),
-            label: const Text('Capturar ubicación GPS real'),
-          ),
-          if (geo.hasValidPosition)
-            ListTile(
-              title: Text(
-                '${geo.latitude!.toStringAsFixed(6)}, ${geo.longitude!.toStringAsFixed(6)}',
-              ),
-              subtitle: Text(
-                'Precisión ${geo.horizontalAccuracy?.toStringAsFixed(1)} m · UTM ${geo.utmZone}\nRTK simulado: no disponible',
-              ),
-            ),
-          TextFormField(
-            initialValue: geo.omissionJustification,
-            decoration: const InputDecoration(
-              labelText: 'Justificación si no es posible capturar',
-            ),
-            onChanged: (v) => _setLocationException(v),
-          ),
+          _AutomaticLocationPanel(geo: geo, onRetry: captureLocation),
         ]);
       case 3:
         children.addAll([
@@ -849,14 +1218,30 @@ class _StepBody extends StatelessWidget {
           ]);
         }
       case 6:
-        children.addAll(
-          _equipment(
-            'energyCommunication',
-            inspection.energyCommunication.energyAvailable,
-            '¿Hay energía disponible?',
-            key: 'energyAvailable',
+        children.addAll([
+          const Text('¿Hay energía disponible?'),
+          _choices(
+            const ['Sí', 'No', 'No verificado'],
+            inspection.energyCommunication.energyAvailabilityAnswer?.name,
+            (v) {
+              final answer = MatchAnswer.values[v];
+              setValue(
+                'energyCommunication',
+                'energyAvailabilityAnswer',
+                answer.name,
+              );
+              setValue(
+                'energyCommunication',
+                'energyAvailable',
+                answer == MatchAnswer.yes
+                    ? true
+                    : answer == MatchAnswer.no
+                    ? false
+                    : null,
+              );
+            },
           ),
-        );
+        ]);
         if (inspection.energyCommunication.energyAvailable == true) {
           children.addAll([
             const Text('Fuentes de energía'),
@@ -873,29 +1258,37 @@ class _StepBody extends StatelessWidget {
           ]);
         }
         children.addAll([
-          const Text('Redes disponibles'),
-          _multiSelect(
-            [...F02aCatalogs.communications, 'Ninguna'],
-            inspection.energyCommunication.availableNetworks,
-            (v) => setValue('energyCommunication', 'availableNetworks', v),
+          _CellularDiagnosticsPanel(
+            diagnostic: cellularDiagnostic,
+            onStart: startCellularDiagnostic,
+            onCancel: cancelCellularDiagnostic,
           ),
-          const Text('¿Hay internet disponible?'),
-          _choices(
-            const ['Sí', 'No', 'No verificado'],
-            inspection.energyCommunication.internetAvailable == null
-                ? null
-                : inspection.energyCommunication.internetAvailable!
-                ? 'Sí'
-                : 'No',
-            (v) => setValue(
-              'energyCommunication',
-              'internetAvailable',
-              v == 0
-                  ? true
-                  : v == 1
-                  ? false
-                  : null,
+          const Text(
+            'Evaluación manual de Wi-Fi',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const Text('¿Hay una red Wi-Fi cercana?'),
+          _wifiChoices('wifiNearbyAnswer', allowNotApplicable: false),
+          const Text('¿Es posible conectarse a la red Wi-Fi?'),
+          _wifiChoices('wifiConnectionPossibleAnswer'),
+          const Text('¿La señal Wi-Fi parece adecuada?'),
+          _wifiChoices('wifiSignalAdequateAnswer'),
+          const Text('¿Hay internet disponible mediante Wi-Fi?'),
+          _wifiChoices('wifiInternetAvailableAnswer'),
+          TextFormField(
+            initialValue: WifiTechnicalAssessment.fromJson(
+              inspection.energyCommunication.wifiAssessment,
+            ).comments,
+            maxLength: 500,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: 'Observaciones de Wi-Fi',
             ),
+            onChanged: (value) => _updateWifi('comments', value),
+          ),
+          const Text(
+            'Wi-Fi es una evaluación del técnico. No se escanean redes, SSID ni intensidad.',
+            style: TextStyle(fontSize: 11, color: AppColors.muted),
           ),
         ]);
       case 7:
@@ -903,12 +1296,15 @@ class _StepBody extends StatelessWidget {
           SwitchListTile(
             title: const Text('Sin daños visibles'),
             value: inspection.noVisibleDamageConfirmed,
-            onChanged: inspection.damageIds.isEmpty
+            onChanged:
+                inspection.damageIds.isEmpty &&
+                    !inspection.damageAssessments.values.any(
+                      (value) => value['status'] == 'damaged',
+                    )
                 ? (v) => setValue('root', 'noVisibleDamageConfirmed', v)
                 : null,
           ),
-          Text('${inspection.damageIds.length} daños registrados'),
-          const Text('Cada daño exige componente, severidad y fotografía.'),
+          ..._damageChecklist(context),
         ]);
       case 8:
         children.add(const Text('Fotografías obligatorias'));
@@ -1005,12 +1401,6 @@ class _StepBody extends StatelessWidget {
     );
   }
 
-  void _setLocationException(String value) {
-    setValue('geoReference', 'omissionJustification', value);
-    setValue('geoReference', 'pendingGeoreference', value.trim().isNotEmpty);
-    setValue('result', 'supervisorReviewRequired', value.trim().isNotEmpty);
-  }
-
   Widget _multiSelect(
     List<String> options,
     List<String> selected,
@@ -1033,6 +1423,129 @@ class _StepBody extends StatelessWidget {
         )
         .toList(),
   );
+
+  Widget _wifiChoices(String field, {bool allowNotApplicable = true}) {
+    final assessment = WifiTechnicalAssessment.fromJson(
+      inspection.energyCommunication.wifiAssessment,
+    );
+    final selected = switch (field) {
+      'wifiNearbyAnswer' => assessment.wifiNearbyAnswer,
+      'wifiConnectionPossibleAnswer' => assessment.wifiConnectionPossibleAnswer,
+      'wifiSignalAdequateAnswer' => assessment.wifiSignalAdequateAnswer,
+      _ => assessment.wifiInternetAvailableAnswer,
+    };
+    final answers = [
+      TechnicalAssessmentAnswer.yes,
+      TechnicalAssessmentAnswer.no,
+      TechnicalAssessmentAnswer.notVerified,
+      if (allowNotApplicable) TechnicalAssessmentAnswer.notApplicable,
+    ];
+    return Wrap(
+      spacing: 8,
+      children: [
+        for (final answer in answers)
+          ChoiceChip(
+            label: Text(switch (answer) {
+              TechnicalAssessmentAnswer.yes => 'Sí',
+              TechnicalAssessmentAnswer.no => 'No',
+              TechnicalAssessmentAnswer.notVerified => 'No verificado',
+              TechnicalAssessmentAnswer.notApplicable => 'No aplica',
+            }),
+            selected: selected == answer,
+            onSelected: (_) => _updateWifi(field, answer.name),
+          ),
+      ],
+    );
+  }
+
+  void _updateWifi(String field, Object? value) {
+    final json = Map<String, dynamic>.from(
+      inspection.energyCommunication.wifiAssessment,
+    );
+    json[field] = value;
+    json['assessedAt'] = DateTime.now().toUtc().toIso8601String();
+    json['schemaVersion'] = 1;
+    setValue('energyCommunication', 'wifiAssessment', json);
+  }
+
+  List<Widget> _damageChecklist(BuildContext context) => [
+    for (final component in DamageComponentCatalog.components)
+      Builder(
+        builder: (context) {
+          final current = Map<String, dynamic>.from(
+            inspection.damageAssessments[component] ?? const {},
+          );
+          final status = current['status'] as String?;
+          final category = 'daño:$component';
+          final photos = _photosFor(category);
+          void update(String key, Object? value) {
+            final all = {
+              for (final entry in inspection.damageAssessments.entries)
+                entry.key: Map<String, dynamic>.from(entry.value),
+            };
+            all[component] = {...current, key: value};
+            setValue('root', 'damageAssessments', all);
+            if (key == 'status' && value == 'damaged') {
+              setValue('root', 'noVisibleDamageConfirmed', false);
+            }
+          }
+
+          return SectionCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  component,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                Wrap(
+                  spacing: 6,
+                  children: [
+                    for (final entry in DamageComponentCatalog.statuses.entries)
+                      ChoiceChip(
+                        label: Text(entry.value),
+                        selected: status == entry.key,
+                        onSelected: (_) => update('status', entry.key),
+                      ),
+                  ],
+                ),
+                if (status == 'damaged') ...[
+                  TextFormField(
+                    initialValue: current['comment'] as String? ?? '',
+                    decoration: const InputDecoration(
+                      labelText: 'Comentario opcional del daño',
+                    ),
+                    onChanged: (value) => update('comment', value),
+                  ),
+                  Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Tomar foto del daño',
+                        onPressed: () =>
+                            capturePhoto(category, ImageSource.camera),
+                        icon: const Icon(Icons.photo_camera_outlined),
+                      ),
+                      IconButton(
+                        tooltip: 'Seleccionar foto del daño',
+                        onPressed: () =>
+                            capturePhoto(category, ImageSource.gallery),
+                        icon: const Icon(Icons.photo_library_outlined),
+                      ),
+                    ],
+                  ),
+                  SectionPhotoCounter(
+                    photos: photos,
+                    requiredEvidence: true,
+                    onOpen: () =>
+                        _openCategoryPhotos(context, category, photos),
+                  ),
+                ],
+              ],
+            ),
+          );
+        },
+      ),
+  ];
 
   List<InspectionPhoto> _photosFor(String category) {
     final box = Hive.box<String>('inspection_photos_v1');
@@ -1128,6 +1641,8 @@ class _StepBody extends StatelessWidget {
 
   String _categoryLabel(String category) => switch (category) {
     'vistaGeneral' => 'Vista general',
+    'válvula' => 'Válvulas',
+    'solenoide' => 'Solenoides',
     _ => '${category[0].toUpperCase()}${category.substring(1)}',
   };
 
@@ -1140,9 +1655,7 @@ class _StepBody extends StatelessWidget {
     if (inspection.pressureValve.exists == true) 'válvula',
     if (inspection.pressureValve.solenoidExists == true) 'solenoide',
     if (inspection.energyCommunication.energyAvailable == true) 'energía',
-    if (inspection.energyCommunication.availableNetworks.any(
-      (item) => item != 'Ninguna',
-    ))
+    if (inspection.energyCommunication.cellularDiagnostic.isNotEmpty)
       'comunicación',
   ];
 
@@ -1198,6 +1711,7 @@ class _StepBody extends StatelessWidget {
         'Malo': 'bad',
         'Crítico': 'critical',
         'No verificado': 'unknown',
+        'No se puede confirmar': 'unknown',
         'Operativo': 'operational',
         'Operativo con observaciones': 'observations',
         'No operativo': 'nonOperational',

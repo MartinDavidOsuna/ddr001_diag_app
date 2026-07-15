@@ -5,6 +5,9 @@ import 'package:hive_ce/hive.dart';
 
 import '../media/inspection_photo.dart';
 import '../media/media_sync_status.dart';
+import '../../data/catalogs/damage_component_catalog.dart';
+import '../network/cellular_network_diagnostic.dart';
+import '../network/wifi_technical_assessment.dart';
 import 'visual_inspection.dart';
 
 class InspectionValidationError {
@@ -70,13 +73,12 @@ class VisualInspectionStepValidator {
       });
 
   InspectionValidationResult validateLocation(VisualInspection value) {
-    final omitted =
-        (value.geoReference.omissionJustification ?? '').trim().isNotEmpty &&
+    final technicalFailure =
         value.geoReference.pendingGeoreference &&
-        value.result.supervisorReviewRequired;
+        (value.geoReference.technicalFailureReason ?? '').isNotEmpty;
     return _result(2, {
-      'location': !value.geoReference.hasValidPosition && !omitted
-          ? 'Captura una ubicación GPS válida o registra la excepción completa.'
+      'location': !value.geoReference.hasValidPosition && !technicalFailure
+          ? 'Espera la captura automática o el diagnóstico técnico.'
           : null,
     });
   }
@@ -126,10 +128,6 @@ class VisualInspectionStepValidator {
               ? 'Indica la condición física.'
               : null,
         if (value.pressureValve.exists == true)
-          'leakage': (value.pressureValve.leakageLevel ?? '').isEmpty
-              ? 'Indica el nivel de fuga.'
-              : null,
-        if (value.pressureValve.exists == true)
           'solenoid': value.pressureValve.solenoidExists == null
               ? 'Indica si existe solenoide.'
               : null,
@@ -141,29 +139,56 @@ class VisualInspectionStepValidator {
 
   InspectionValidationResult validateEnergyCommunication(
     VisualInspection value,
-  ) => _result(6, {
-    'energy': value.energyCommunication.energyAvailable == null
-        ? 'Indica si hay energía disponible.'
-        : null,
-    if (value.energyCommunication.energyAvailable == true)
-      'sources': value.energyCommunication.sources.isEmpty
-          ? 'Selecciona al menos una fuente de energía.'
+  ) {
+    final wifi = WifiTechnicalAssessment.fromJson(
+      value.energyCommunication.wifiAssessment,
+    );
+    final cellular = value.energyCommunication.cellularDiagnostic.isEmpty
+        ? null
+        : CellularNetworkDiagnostic.fromJson(
+            value.energyCommunication.cellularDiagnostic,
+          );
+    return _result(6, {
+      'energy': value.energyCommunication.energyAvailabilityAnswer == null
+          ? 'Indica si hay energía disponible.'
           : null,
-    if (value.energyCommunication.energyAvailable == true)
-      'voltage': (value.energyCommunication.voltage ?? '').isEmpty
-          ? 'Registra el voltaje observado.'
+      if (value.energyCommunication.energyAvailable == true)
+        'sources': value.energyCommunication.sources.isEmpty
+            ? 'Selecciona al menos una fuente de energía.'
+            : null,
+      if (value.energyCommunication.energyAvailable == true)
+        'voltage': (value.energyCommunication.voltage ?? '').isEmpty
+            ? 'Registra el voltaje observado.'
+            : null,
+      'cellularDiagnostic': cellular == null || cellular.isRunning
+          ? 'Completa o cancela el diagnóstico de red GPRS.'
           : null,
-    'networks': value.energyCommunication.availableNetworks.isEmpty
-        ? 'Selecciona redes disponibles o “Ninguna”.'
-        : null,
-    'internet': value.energyCommunication.internetAvailable == null
-        ? 'Indica si hay internet disponible.'
-        : null,
-  });
+      'wifiNearby': wifi.wifiNearbyAnswer == null
+          ? 'Evalúa si hay una red Wi-Fi cercana.'
+          : null,
+      'wifiConnection': wifi.wifiConnectionPossibleAnswer == null
+          ? 'Evalúa si es posible conectarse a Wi-Fi.'
+          : null,
+      'wifiSignal': wifi.wifiSignalAdequateAnswer == null
+          ? 'Evalúa si la señal Wi-Fi parece adecuada.'
+          : null,
+      'wifiInternet': wifi.wifiInternetAvailableAnswer == null
+          ? 'Evalúa si hay internet mediante Wi-Fi.'
+          : null,
+    });
+  }
 
   InspectionValidationResult validateDamage(VisualInspection value) {
     final errors = <InspectionValidationError>[];
-    if (value.damageIds.isEmpty && !value.noVisibleDamageConfirmed) {
+    final damagedComponents = value.damageAssessments.entries
+        .where((entry) => entry.value['status'] == 'damaged')
+        .map((entry) => entry.key)
+        .toList();
+    if (value.damageIds.isEmpty &&
+        damagedComponents.isEmpty &&
+        !value.noVisibleDamageConfirmed &&
+        value.damageAssessments.length <
+            DamageComponentCatalog.components.length) {
       errors.add(
         const InspectionValidationError(
           7,
@@ -172,7 +197,8 @@ class VisualInspectionStepValidator {
         ),
       );
     }
-    if (value.damageIds.isNotEmpty && value.noVisibleDamageConfirmed) {
+    if ((value.damageIds.isNotEmpty || damagedComponents.isNotEmpty) &&
+        value.noVisibleDamageConfirmed) {
       errors.add(
         const InspectionValidationError(
           7,
@@ -180,6 +206,31 @@ class VisualInspectionStepValidator {
           'No puedes confirmar “Sin daños visibles” y registrar daños simultáneamente.',
         ),
       );
+    }
+    if (!value.noVisibleDamageConfirmed) {
+      for (final component in DamageComponentCatalog.components) {
+        if ((value.damageAssessments[component]?['status'] as String? ?? '')
+            .isEmpty) {
+          errors.add(
+            InspectionValidationError(
+              7,
+              'damageAssessment:$component',
+              'Evalúa el componente $component.',
+            ),
+          );
+        }
+      }
+    }
+    for (final component in damagedComponents) {
+      if (!_hasValidCategory('daño:$component')) {
+        errors.add(
+          InspectionValidationError(
+            7,
+            'damageEvidence:$component',
+            'El daño de $component requiere evidencia fotográfica.',
+          ),
+        );
+      }
     }
     for (final id in value.damageIds) {
       final damage = damageDocuments[id] ?? const {};
@@ -263,10 +314,7 @@ class VisualInspectionStepValidator {
     if (value.pressureValve.exists == true) 'válvula',
     if (value.pressureValve.solenoidExists == true) 'solenoide',
     if (value.energyCommunication.energyAvailable == true) 'energía',
-    if (value.energyCommunication.availableNetworks.any(
-      (item) => item != 'Ninguna',
-    ))
-      'comunicación',
+    if (value.energyCommunication.cellularDiagnostic.isNotEmpty) 'comunicación',
   ];
 
   bool _hasValidCategory(String category) =>

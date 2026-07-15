@@ -275,6 +275,14 @@ class ManualPage extends StatelessWidget {
               '6. Trabajo offline',
               'Las trazas y la cola demo se conservan localmente.',
             ),
+            (
+              '7. Estados de reportes',
+              'Borrador: información guardada sin finalizar.\nListo: preparación mínima completa.\nEn proceso: inspección activa.\nPausado: detención temporal recuperable.\nSuspendido: detención técnica, operativa o de seguridad.\nFinalizado: reporte cerrado e inmutable.\nCancelado: no continuará.\nRequiere repetición: debe crearse una inspección relacionada.\nPendiente de revisión: requiere supervisión.\nSincronizado: confirmación local simulada hasta contar con backend real.',
+            ),
+            (
+              '8. Términos de captura',
+              'RV es REPORTE VISUAL y RF es REPORTE FUNCIONAL. Sin sincronizar indica datos pendientes. No aplica es diferente de No realizada. No verificado indica que no fue posible confirmar Sí o No. Visita sin prueba documenta una visita donde no se ejecutaron pruebas.',
+            ),
           ]) ...[
             SectionCard(
               child: Column(
