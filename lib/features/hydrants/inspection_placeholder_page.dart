@@ -27,6 +27,7 @@ import '../shared/section_photo_counter.dart';
 import '../../domain/media/media_sync_status.dart';
 import '../../domain/network/cellular_network_diagnostic.dart';
 import '../../domain/network/wifi_technical_assessment.dart';
+import '../../domain/network/wifi_assessment_rules.dart';
 import '../../domain/functional/functional_models.dart';
 
 class InspectionPlaceholderPage extends StatefulWidget {
@@ -136,6 +137,12 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
 
   Future<void> _save({int? nextStep}) async {
     final state = context.read<AppState>();
+    if (inspection?.currentStep == 6 &&
+        nextStep != null &&
+        nextStep != 6 &&
+        _cellularController?.isRunning == true) {
+      await _cellularController!.cancel(interrupted: true);
+    }
     setState(() => saving = true);
     final updated = inspection!.copyWith(
       currentStep: nextStep ?? inspection!.currentStep,
@@ -783,12 +790,12 @@ class _CellularDiagnosticsPanel extends StatelessWidget {
   final VoidCallback onStart, onCancel;
 
   String _stageLabel(String value) => switch (value) {
-    'preparing' => 'Preparando análisis',
+    'preparing' || 'requestingCellularNetwork' => 'Solicitando red celular',
     'checkingPermissions' => 'Revisando permisos',
-    'checkingCellularInterface' => 'Comprobando interfaz celular',
-    'waitingForRegistration' => 'Esperando registro en red',
-    'analyzingSignal' => 'Analizando señal disponible',
-    'checkingCellularConnectivity' => 'Verificando conectividad celular',
+    'waitingForAvailability' => 'Esperando disponibilidad',
+    'verifyingCapabilities' => 'Verificando capacidades',
+    'testingInternet' => 'Probando conexión a internet',
+    'measuringResponse' => 'Midiendo respuesta',
     'calculatingResult' => 'Calculando resultado',
     'completed' => 'Diagnóstico completado',
     'partial' => 'Diagnóstico parcial',
@@ -812,6 +819,20 @@ class _CellularDiagnosticsPanel extends StatelessWidget {
       CellularDiagnosticStatus.cancelled => 'Diagnóstico cancelado',
       _ => 'Análisis pendiente',
     };
+    final probe = value?.internetProbe;
+    final cellularDetected = probe == null
+        ? 'No determinado'
+        : probe.cellularNetworkAcquired
+        ? 'Sí'
+        : probe.result ==
+              CellularInternetProbeOutcome.cellularNetworkUnavailable
+        ? 'No'
+        : 'No determinado';
+    final validated = probe?.validatedCapabilityPresent == null
+        ? 'No disponible'
+        : probe!.validatedCapabilityPresent!
+        ? 'Sí'
+        : 'No';
     return SectionCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -844,14 +865,24 @@ class _CellularDiagnosticsPanel extends StatelessWidget {
           Text(
             'Tecnología: ${value?.networkTechnology ?? 'No se pudo determinar'}',
           ),
+          Text('Red celular detectada: $cellularDetected'),
           Text(
-            'Internet mediante GPRS: ${switch (value?.internetStatus) {
-              CellularInternetStatus.available => 'Disponible',
-              CellularInternetStatus.unavailable => 'No disponible',
-              CellularInternetStatus.indeterminate => 'No se pudo determinar',
-              CellularInternetStatus.cancelled => 'Diagnóstico cancelado',
-              _ => 'Análisis pendiente',
-            }}',
+            'Internet celular confirmado: ${probe?.confirmsCellularInternet == true
+                ? 'Sí'
+                : running || probe == null
+                ? 'Análisis pendiente'
+                : 'No confirmado'}',
+          ),
+          Text('Android validó la conexión: $validated'),
+          Text(
+            'Capacidad INTERNET: ${probe?.internetCapabilityPresent == null
+                ? 'No disponible'
+                : probe!.internetCapabilityPresent!
+                ? 'Sí'
+                : 'No'}',
+          ),
+          Text(
+            'Latencia: ${probe?.latencyMs == null ? 'No calculable' : '${probe!.latencyMs} ms'}',
           ),
           Text(
             'Calidad: ${value?.qualityScore == null ? 'No calculable' : '${value!.qualityScore}/10 · ${value.qualityLabel}'}',
@@ -860,8 +891,11 @@ class _CellularDiagnosticsPanel extends StatelessWidget {
             'Efectividad de la conexión GPRS: ${value?.effectivenessPercentage == null ? 'No calculable' : '${value!.effectivenessPercentage!.toStringAsFixed(0)} %'}',
           ),
           Text('Tiempo utilizado: ${value?.elapsedSeconds ?? 0} s'),
+          Text(
+            'Método: ${probe?.methodVersion ?? value?.method ?? 'Pendiente'}',
+          ),
           const Text(
-            'Metodología DEMO. La API actual observa la interfaz celular del teléfono; no sustituye una prueba del módem del hidrante.',
+            'Metodología DEMO. Esta prueba evalúa la red celular del teléfono y no certifica directamente el módem instalado en el hidrante.',
             style: TextStyle(fontSize: 11, color: AppColors.orange),
           ),
           Align(
@@ -1218,6 +1252,10 @@ class _StepBody extends StatelessWidget {
           ]);
         }
       case 6:
+        final wifiAssessment = WifiTechnicalAssessment.fromJson(
+          inspection.energyCommunication.wifiAssessment,
+        );
+        final wifiRules = WifiAssessmentRules.evaluate(wifiAssessment);
         children.addAll([
           const Text('¿Hay energía disponible?'),
           _choices(
@@ -1269,23 +1307,37 @@ class _StepBody extends StatelessWidget {
           ),
           const Text('¿Hay una red Wi-Fi cercana?'),
           _wifiChoices('wifiNearbyAnswer', allowNotApplicable: false),
-          const Text('¿Es posible conectarse a la red Wi-Fi?'),
-          _wifiChoices('wifiConnectionPossibleAnswer'),
-          const Text('¿La señal Wi-Fi parece adecuada?'),
-          _wifiChoices('wifiSignalAdequateAnswer'),
-          const Text('¿Hay internet disponible mediante Wi-Fi?'),
-          _wifiChoices('wifiInternetAvailableAnswer'),
-          TextFormField(
-            initialValue: WifiTechnicalAssessment.fromJson(
-              inspection.energyCommunication.wifiAssessment,
-            ).comments,
-            maxLength: 500,
-            maxLines: 3,
-            decoration: const InputDecoration(
-              labelText: 'Observaciones de Wi-Fi',
+          if (wifiRules.visibleQuestions.contains(
+            WifiAssessmentQuestion.connectionPossible,
+          )) ...[
+            const Text('¿Es posible conectarse a la red Wi-Fi?'),
+            _wifiChoices('wifiConnectionPossibleAnswer'),
+          ],
+          if (wifiRules.visibleQuestions.contains(
+            WifiAssessmentQuestion.signal,
+          )) ...[
+            const Text('¿La señal Wi-Fi parece adecuada?'),
+            _wifiChoices('wifiSignalAdequateAnswer'),
+          ],
+          if (wifiRules.visibleQuestions.contains(
+            WifiAssessmentQuestion.internet,
+          )) ...[
+            const Text('¿Hay internet disponible mediante Wi-Fi?'),
+            _wifiChoices('wifiInternetAvailableAnswer'),
+          ],
+          if (wifiAssessment.wifiNearbyAnswer == TechnicalAssessmentAnswer.yes)
+            TextFormField(
+              key: ValueKey(
+                'wifi-comments-${wifiAssessment.wifiNearbyAnswer?.name}',
+              ),
+              initialValue: wifiAssessment.comments,
+              maxLength: 500,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Observaciones de Wi-Fi',
+              ),
+              onChanged: (value) => _updateWifi('comments', value),
             ),
-            onChanged: (value) => _updateWifi('comments', value),
-          ),
           const Text(
             'Wi-Fi es una evaluación del técnico. No se escanean redes, SSID ni intensidad.',
             style: TextStyle(fontSize: 11, color: AppColors.muted),
@@ -1459,13 +1511,38 @@ class _StepBody extends StatelessWidget {
   }
 
   void _updateWifi(String field, Object? value) {
-    final json = Map<String, dynamic>.from(
+    final current = WifiTechnicalAssessment.fromJson(
       inspection.energyCommunication.wifiAssessment,
     );
-    json[field] = value;
-    json['assessedAt'] = DateTime.now().toUtc().toIso8601String();
-    json['schemaVersion'] = 1;
-    setValue('energyCommunication', 'wifiAssessment', json);
+    final answer = value is String
+        ? TechnicalAssessmentAnswer.values
+              .where((item) => item.name == value)
+              .firstOrNull
+        : null;
+    final updated = switch (field) {
+      'wifiNearbyAnswer' when answer != null =>
+        WifiAssessmentRules.changeNearby(current, answer),
+      'wifiConnectionPossibleAnswer' when answer != null =>
+        WifiAssessmentRules.changeConnection(current, answer),
+      'wifiSignalAdequateAnswer' when answer != null =>
+        WifiAssessmentRules.changeLeaf(
+          current,
+          WifiAssessmentQuestion.signal,
+          answer,
+        ),
+      'wifiInternetAvailableAnswer' when answer != null =>
+        WifiAssessmentRules.changeLeaf(
+          current,
+          WifiAssessmentQuestion.internet,
+          answer,
+        ),
+      'comments' => WifiAssessmentRules.changeComments(
+        current,
+        value as String? ?? '',
+      ),
+      _ => current,
+    };
+    setValue('energyCommunication', 'wifiAssessment', updated.toJson());
   }
 
   List<Widget> _damageChecklist(BuildContext context) => [

@@ -1,28 +1,45 @@
-# Diagnóstico GPRS y evaluación Wi-Fi — Etapa 4
+# Diagnóstico GPRS y evaluación Wi-Fi — Etapas 4/4C
 
 ## Separación de conceptos
 
-El diagnóstico automático observa exclusivamente la interfaz móvil del teléfono mediante `connectivity_plus`. No escanea Wi-Fi, no enumera SSID/RSSI y no mezcla la conectividad del teléfono con la del módem del hidrante. La evaluación Wi-Fi es manual y se almacena en `WifiTechnicalAssessment`.
+El diagnóstico automático evalúa exclusivamente la red celular del teléfono. En Android solicita un `Network` con `TRANSPORT_CELLULAR`, consulta por separado `NET_CAPABILITY_INTERNET` y `NET_CAPABILITY_VALIDATED`, y abre la conexión HTTPS mediante `Network.openConnection`. No usa `bindProcessToNetwork`, por lo que no cambia la ruta global de la aplicación y Wi-Fi no puede satisfacer la prueba.
 
-## Resultado GPRS
+La prueba describe el teléfono y no certifica el módem instalado en el hidrante. Wi-Fi se evalúa manualmente; no se escanean SSID, RSSI ni redes cercanas.
 
-- `available`: Android informó una interfaz móvil activa antes del límite.
-- `noCellularNetworksAvailable`: durante 60 segundos no apareció una interfaz móvil observable.
-- `indeterminate`: la API o plataforma impidió completar el diagnóstico.
-- `cancelled`: el técnico canceló o la pantalla/app interrumpió el proceso.
+## Endpoint y privacidad
 
-El controlador persiste inicio y resultado terminal, evita ejecuciones simultáneas y cancela sus timers al finalizar o destruirse. Un análisis interrumpido no se reanuda desde memoria ni se convierte en ausencia de red.
+`CellularProbeConfiguration.demo` centraliza temporalmente `https://connectivitycheck.gstatic.com/generate_204`, método GET, respuesta esperada 204, límites de conexión/lectura de 12 segundos, máximo 1024 bytes y versión `cellular-network-http-demo-v1`. En Etapa 5 debe sustituirse por un endpoint controlado.
 
-## Alcance de datos
+La solicitud no incorpora hidrante, ubicación, usuario, tokens, fotografías ni datos del reporte. La persistencia conserva solo host, método y versión; no una URL parametrizada.
 
-La integración actual no expone operador, registro, tecnología, RSSI celular ni una ruta de internet forzada exclusivamente sobre datos móviles. Estos datos se presentan como “No se pudo determinar”; no se inventan. El resultado describe el teléfono, no certifica el módem GPRS del hidrante.
+## Resultados independientes
+
+- Red adquirida: Android entregó un objeto `Network` celular.
+- Capacidad INTERNET: la red declara configuración para internet; no prueba acceso efectivo.
+- Capacidad VALIDATED: Android informa validación general; no sustituye la prueba de la app.
+- HTTP real: solo un código esperado recibido mediante `Network.openConnection` confirma internet celular para esta prueba.
+- Endpoint inaccesible, timeout parcial, TLS o código inesperado: la red puede existir, pero internet queda “No confirmado”.
+- Sin red: solo 60 segundos completos sin adquirir una red celular producen `noCellularNetworksAvailable`.
+- Error/restricción: produce `indeterminate`; cancelar produce `cancelled`.
+
+El canal libera `NetworkCallback`, `HttpURLConnection`, streams, tarea y timeout al completar, fallar, cancelar o destruir la Activity. La UI conserva un contador máximo de 60 segundos y progreso asociado a eventos nativos reales.
 
 ## Calidad y efectividad DEMO
 
-La calidad `cellular-quality-demo-v1` solo se calcula con dBm real: −70 dBm o mejor equivale a 10; −120 dBm o peor equivale a 1; entre ambos se interpola linealmente. Sin dBm se muestra “No calculable”.
+La calidad 1–10 solo se calcula si existe una señal dBm real. Sin ella se muestra “No calculable”. La efectividad `cellular-effectiveness-demo-v2` pondera red adquirida (20), transporte celular (15), INTERNET (15), VALIDATED (15), HTTP esperado (25), latencia (10) y estabilidad histórica (5). Requiere al menos cuatro indicadores; registra utilizados, no disponibles, porcentaje y motivo. Nunca incluye Wi-Fi.
 
-La efectividad usa únicamente indicadores celulares conocidos: interfaz (25 puntos), registro (20), calidad (25), internet celular (20) e intentos exitosos (10). Requiere al menos tres indicadores comprobados y se normaliza a 0–100. La metodología es DEMO y no constituye aprobación técnica oficial.
+## Wi-Fi manual y condicional
 
-## Wi-Fi manual
+La pregunta principal es “¿Hay una red Wi-Fi cercana?”.
 
-El técnico responde si hay Wi-Fi cercano y si conexión, señal e internet son posibles, usando valores explícitos Sí, No, No verificado y No aplica cuando corresponde. `null` significa solamente “sin responder”. Las observaciones son opcionales. Wi-Fi nunca altera GPRS y GPRS nunca completa Wi-Fi automáticamente.
+- Sí: muestra y exige “¿Es posible conectarse?”.
+- Conexión Sí: muestra y exige señal aparente e internet mediante Wi-Fi.
+- Conexión No o No verificado: oculta señal/internet y persiste ambas como `notApplicable`.
+- Wi-Fi No o No verificado: oculta todas las dependientes, las normaliza a `notApplicable` y no bloquea avance.
+- Cambiar una rama a Sí inicializa sus dependientes sin respuesta; no recupera silenciosamente valores obsoletos.
+
+Las reglas están en `WifiAssessmentRules`; `null` significa sin responder y no representa “No verificado”. Las observaciones son opcionales y solo se muestran en la rama Sí.
+
+## Plataformas y permisos
+
+Android requiere `INTERNET`, `ACCESS_NETWORK_STATE` y el permiso normal `CHANGE_NETWORK_STATE` para solicitar temporalmente un transporte celular; ninguno accede a identidad de SIM o telefonía. No se agregan permisos de telefonía ni Wi-Fi. En iOS y plataformas donde no se garantiza el aislamiento, el adaptador devuelve `platformRestricted`/`indeterminate`; no se afirma paridad.

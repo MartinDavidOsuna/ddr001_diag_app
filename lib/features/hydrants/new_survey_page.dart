@@ -15,6 +15,8 @@ import '../../domain/inspections/inspection_entities.dart';
 import '../../domain/models/app_models.dart';
 import '../../domain/functional/functional_models.dart';
 import '../../core/constants/report_type_labels.dart';
+import '../../data/local/operation_journal_repository.dart';
+import '../../data/local/work_creation_coordinator.dart';
 
 class NewSurveyPage extends StatefulWidget {
   const NewSurveyPage({super.key});
@@ -357,18 +359,34 @@ class _NewSurveyPageState extends State<NewSurveyPage> {
           entityId: hydrant.id,
           hydrantId: hydrant.id,
         );
-        await state.functionalInspectionRepository.openOrCreate(
-          hydrant,
-          state.user,
-        );
         await state.trace(
           'functional_eligibility_created',
           'Habilitación RF local pendiente de validación: ${authorizationController.text.trim()}',
           hydrantId: hydrant.id,
         );
       }
-      if (workSelection != WorkSelection.functionalOnly) {
+      if (workSelection == WorkSelection.visualAndFunctional) {
+        final result = await WorkCreationCoordinator(
+          visual: state.visualInspectionRepository,
+          functional: state.functionalInspectionRepository,
+          journal: OperationJournalRepository(
+            Hive.box<String>('operation_journal_v1'),
+          ),
+        ).createVisualAndFunctional(hydrant: hydrant, user: state.user);
+        if (result.status != WorkCreationStatus.committed) {
+          throw StateError(
+            result.status == WorkCreationStatus.needsRecovery
+                ? 'La operación quedó pendiente de recuperación.'
+                : result.error ?? 'No fue posible crear ambos trabajos.',
+          );
+        }
+      } else if (workSelection == WorkSelection.visualOnly) {
         await state.visualInspectionRepository.openOrCreate(
+          hydrant,
+          state.user,
+        );
+      } else {
+        await state.functionalInspectionRepository.openOrCreate(
           hydrant,
           state.user,
         );

@@ -452,6 +452,12 @@ class VisualInspection {
     this.closureComments = '',
     this.noVisibleDamageConfirmed = false,
     this.damageAssessments = const {},
+    this.revisionOfReportId,
+    this.revisionNumber = 0,
+    this.previousRevisionId,
+    this.revisionReason = '',
+    this.activeRevision = true,
+    this.supervisorReviewRequired = false,
   });
   final String id,
       hydrantId,
@@ -466,9 +472,12 @@ class VisualInspection {
   final bool noVisibleDamageConfirmed;
   final Map<String, Map<String, dynamic>> damageAssessments;
   final String? assignmentId;
+  final String? revisionOfReportId, previousRevisionId;
   final HydrantSource source;
   final InspectionStatus status;
-  final int currentStep, schemaVersion;
+  final int currentStep, schemaVersion, revisionNumber;
+  final String revisionReason;
+  final bool activeRevision, supervisorReviewRequired;
   final DateTime startedAt, createdAt, updatedAt;
   final DateTime? completedAt;
   final HydrantIdentification identification;
@@ -497,6 +506,12 @@ class VisualInspection {
     String? closureComments,
     bool? noVisibleDamageConfirmed,
     Map<String, Map<String, dynamic>>? damageAssessments,
+    String? revisionOfReportId,
+    int? revisionNumber,
+    String? previousRevisionId,
+    String? revisionReason,
+    bool? activeRevision,
+    bool? supervisorReviewRequired,
   }) => VisualInspection(
     id: id,
     hydrantId: hydrantId,
@@ -529,6 +544,13 @@ class VisualInspection {
     noVisibleDamageConfirmed:
         noVisibleDamageConfirmed ?? this.noVisibleDamageConfirmed,
     damageAssessments: damageAssessments ?? this.damageAssessments,
+    revisionOfReportId: revisionOfReportId ?? this.revisionOfReportId,
+    revisionNumber: revisionNumber ?? this.revisionNumber,
+    previousRevisionId: previousRevisionId ?? this.previousRevisionId,
+    revisionReason: revisionReason ?? this.revisionReason,
+    activeRevision: activeRevision ?? this.activeRevision,
+    supervisorReviewRequired:
+        supervisorReviewRequired ?? this.supervisorReviewRequired,
   );
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -561,6 +583,12 @@ class VisualInspection {
     'closureComments': closureComments,
     'noVisibleDamageConfirmed': noVisibleDamageConfirmed,
     'damageAssessments': damageAssessments,
+    'revisionOfReportId': revisionOfReportId,
+    'revisionNumber': revisionNumber,
+    'previousRevisionId': previousRevisionId,
+    'revisionReason': revisionReason,
+    'activeRevision': activeRevision,
+    'supervisorReviewRequired': supervisorReviewRequired,
   };
   factory VisualInspection.fromJson(Map<String, dynamic> j) => VisualInspection(
     id: j['id'] as String,
@@ -616,6 +644,12 @@ class VisualInspection {
       ).entries)
         entry.key: Map<String, dynamic>.from(entry.value as Map? ?? const {}),
     },
+    revisionOfReportId: j['revisionOfReportId'] as String?,
+    revisionNumber: j['revisionNumber'] as int? ?? 0,
+    previousRevisionId: j['previousRevisionId'] as String?,
+    revisionReason: j['revisionReason'] as String? ?? '',
+    activeRevision: j['activeRevision'] as bool? ?? true,
+    supervisorReviewRequired: j['supervisorReviewRequired'] as bool? ?? false,
   );
 }
 

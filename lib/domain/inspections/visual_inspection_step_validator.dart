@@ -8,6 +8,7 @@ import '../media/media_sync_status.dart';
 import '../../data/catalogs/damage_component_catalog.dart';
 import '../network/cellular_network_diagnostic.dart';
 import '../network/wifi_technical_assessment.dart';
+import '../network/wifi_assessment_rules.dart';
 import 'visual_inspection.dart';
 
 class InspectionValidationError {
@@ -143,6 +144,7 @@ class VisualInspectionStepValidator {
     final wifi = WifiTechnicalAssessment.fromJson(
       value.energyCommunication.wifiAssessment,
     );
+    final wifiValidation = WifiAssessmentRules.validate(wifi);
     final cellular = value.energyCommunication.cellularDiagnostic.isEmpty
         ? null
         : CellularNetworkDiagnostic.fromJson(
@@ -163,18 +165,11 @@ class VisualInspectionStepValidator {
       'cellularDiagnostic': cellular == null || cellular.isRunning
           ? 'Completa o cancela el diagnóstico de red GPRS.'
           : null,
-      'wifiNearby': wifi.wifiNearbyAnswer == null
-          ? 'Evalúa si hay una red Wi-Fi cercana.'
-          : null,
-      'wifiConnection': wifi.wifiConnectionPossibleAnswer == null
-          ? 'Evalúa si es posible conectarse a Wi-Fi.'
-          : null,
-      'wifiSignal': wifi.wifiSignalAdequateAnswer == null
-          ? 'Evalúa si la señal Wi-Fi parece adecuada.'
-          : null,
-      'wifiInternet': wifi.wifiInternetAvailableAnswer == null
-          ? 'Evalúa si hay internet mediante Wi-Fi.'
-          : null,
+      'wifiNearby': wifiValidation.errors[WifiAssessmentQuestion.nearby],
+      'wifiConnection':
+          wifiValidation.errors[WifiAssessmentQuestion.connectionPossible],
+      'wifiSignal': wifiValidation.errors[WifiAssessmentQuestion.signal],
+      'wifiInternet': wifiValidation.errors[WifiAssessmentQuestion.internet],
     });
   }
 

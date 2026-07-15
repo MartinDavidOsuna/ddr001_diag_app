@@ -18,8 +18,12 @@ import '../../core/widgets/common_widgets.dart';
 import '../../data/catalogs/functional_catalogs.dart';
 import '../../data/local/completed_visual_report_resolver.dart';
 import '../../domain/functional/functional_models.dart';
+import '../../domain/functional/functional_collection_models.dart';
+import '../../domain/functional/functional_aggregate_result.dart';
 import '../../domain/enums/app_enums.dart';
 import '../../domain/media/inspection_photo.dart';
+import '../../domain/workflow/report_state_machine.dart';
+import '../shared/section_photo_counter.dart';
 import 'calculation/functional_result_engine.dart';
 
 class FunctionalInspectionPage extends StatefulWidget {
@@ -50,6 +54,9 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
   String? error;
   final photoService = ReliablePhotoService();
   final Map<String, TextEditingController> controllers = {};
+  List<ValveRecord> valveRecords = [];
+  List<ReducerRun> reducerRuns = [];
+  List<AlarmAttemptRecord> alarmAttempts = [];
 
   @override
   void initState() {
@@ -99,6 +106,7 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
       }
       if (!mounted) return;
       inspection = value;
+      _loadFunctionalCollections(value.id);
       readOnly = active == null && completed?.id == value.id;
       for (final entry in value.stepData.entries) {
         _controller(entry.key).text = '${entry.value}';
@@ -117,6 +125,54 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
     }
     if (mounted) setState(() => loading = false);
   }
+
+  void _loadFunctionalCollections(String inspectionId) {
+    valveRecords =
+        _decodeCollection(
+            'valve_records_v1',
+            ValveRecord.fromJson,
+          ).where((value) => value.inspectionId == inspectionId).toList()
+          ..sort((a, b) => a.order.compareTo(b.order));
+    reducerRuns =
+        _decodeCollection(
+            'reducer_runs_v1',
+            ReducerRun.fromJson,
+          ).where((value) => value.inspectionId == inspectionId).toList()
+          ..sort((a, b) => a.order.compareTo(b.order));
+    alarmAttempts =
+        _decodeCollection(
+            'alarm_attempts_v1',
+            AlarmAttemptRecord.fromJson,
+          ).where((value) => value.inspectionId == inspectionId).toList()
+          ..sort((a, b) => a.attemptNumber.compareTo(b.attemptNumber));
+  }
+
+  List<T> _decodeCollection<T>(
+    String boxName,
+    T Function(Map<String, dynamic>) decode,
+  ) {
+    final values = <T>[];
+    for (final raw in Hive.box<String>(boxName).values) {
+      try {
+        values.add(decode(VersionedJsonCodec.decode(raw).payload));
+      } on Object {
+        continue;
+      }
+    }
+    return values;
+  }
+
+  Future<void> _saveCollectionRecord(
+    String boxName,
+    String id,
+    Map<String, dynamic> json,
+  ) => Hive.box<String>(boxName).put(
+    id,
+    VersionedJsonCodec.encode(
+      schemaVersion: json['schemaVersion'] as int? ?? 1,
+      payload: json,
+    ),
+  );
 
   Future<FunctionalInspection> _inheritVisualContext(
     FunctionalInspection value,
@@ -266,6 +322,49 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
   Future<bool> _save({int? step, FunctionalInspectionStatus? status}) async {
     if (inspection == null) return false;
     final state = context.read<AppState>();
+    if (status != null && status != inspection!.status) {
+      final transition = const ReportStateMachine().evaluate(
+        ReportTransitionRequest(
+          reportId: inspection!.id,
+          reportType: 'f02B',
+          currentState: ReportState.values.byName(inspection!.status.name),
+          requestedState: ReportState.values.byName(status.name),
+          actor: state.user.id,
+          role: state.user.role,
+          deviceId: state.user.deviceId,
+          reason: status == FunctionalInspectionStatus.suspended
+              ? inspection!.suspensionReason
+              : status == FunctionalInspectionStatus.cancelled
+              ? inspection!.suspensionReason
+              : '',
+          timestamp: DateTime.now().toUtc(),
+          correlationId: const Uuid().v4(),
+        ),
+      );
+      await state.trace(
+        transition.allowed
+            ? 'report_transition_allowed'
+            : 'report_transition_rejected',
+        transition.userMessage,
+        hydrantId: inspection!.hydrantId,
+        inspectionId: inspection!.id,
+        entityType: 'reportTransition',
+        entityId: transition.traceEventId,
+        metadata: {
+          'previousState': transition.previousState.name,
+          'requestedState': status.name,
+          'reasonCode': transition.reasonCode,
+        },
+      );
+      if (!transition.allowed) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(transition.userMessage)));
+        }
+        return false;
+      }
+    }
     setState(() {
       saving = true;
       saveState = 'Guardando';
@@ -403,43 +502,68 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
     final data = _currentData();
     final records = <String, FunctionalTestRecord>{};
     if (step == 4) {
-      final valveId = '${inspection!.id}:valve:1';
-      records[valveId] = FunctionalValveTest(
-        id: valveId,
-        inspectionId: inspection!.id,
-        valveId: '${data['valveIdentifier'] ?? 'VAL-1'}',
-        diameter: '${data['valveDiameter'] ?? ''}',
-        openingTimeSeconds: '${data['valveOpeningTime'] ?? ''}',
-        closingTimeSeconds: '${data['valveClosingTime'] ?? ''}',
-        numberOfCycles: int.tryParse('${data['valveCycles'] ?? '1'}') ?? 1,
-        manualOperation: '${data['valveManualOperation'] ?? ''}',
-        automaticOperation: '${data['valveAutomaticOperation'] ?? ''}',
-        effort: '${data['valveEffort'] ?? ''}',
-        blockage: data['valveBlockage'] == 'yes',
-        noise: data['valveNoise'] == 'yes',
-        vibration: data['valveVibration'] == 'yes',
-        leakageLevel: '${data['valveLeakage'] ?? 'none'}',
-        pressureBehavior: '${data['valvePressureBehavior'] ?? ''}',
-        result: '${data['step4Status'] ?? ''}',
-        comments: '${data['step4Comments'] ?? ''}',
-      );
-      final reducerId = '${inspection!.id}:reducer:1';
+      final configuredValves = valveRecords
+          .where((value) => value.active)
+          .toList();
+      for (final valve in configuredValves) {
+        final testId = '${valve.id}:test:1';
+        records[testId] = FunctionalValveTest(
+          id: testId,
+          inspectionId: inspection!.id,
+          valveId: valve.id,
+          diameter: valve.diameter,
+          openingTimeSeconds:
+              '${valve.configuration['openingTimeSeconds'] ?? ''}',
+          closingTimeSeconds:
+              '${valve.configuration['closingTimeSeconds'] ?? ''}',
+          numberOfCycles: (valve.configuration['numberOfCycles'] as int?) ?? 1,
+          manualOperation:
+              '${valve.configuration['manualOperation'] ?? 'notPerformed'}',
+          automaticOperation:
+              '${valve.configuration['automaticOperation'] ?? 'notPerformed'}',
+          effort: '${valve.configuration['effort'] ?? ''}',
+          blockage: valve.configuration['blockage'] == true,
+          noise: valve.configuration['noise'] == true,
+          vibration: valve.configuration['vibration'] == true,
+          leakageLevel: '${valve.configuration['leakageLevel'] ?? 'none'}',
+          pressureBehavior: '${valve.configuration['pressureBehavior'] ?? ''}',
+          result: valve.result.isEmpty
+              ? '${data['step4Status'] ?? ''}'
+              : valve.result,
+          comments: '${data['step4Comments'] ?? ''}',
+          photoIds: valve.photoIds,
+        );
+      }
+      if (configuredValves.isEmpty) {
+        final valveId = const Uuid().v4();
+        records[valveId] = FunctionalValveTest(
+          id: valveId,
+          inspectionId: inspection!.id,
+          valveId: valveId,
+          diameter: '${data['valveDiameter'] ?? ''}',
+          result: '${data['step4Status'] ?? ''}',
+          comments: '${data['step4Comments'] ?? ''}',
+        );
+      }
+      final reducerId = 'reducer:${inspection!.id}';
       records[reducerId] = ReducerTest(
         id: reducerId,
         inspectionId: inspection!.id,
-        runs: [
-          {
-            'inletPressure': '${data['reducerInletPressure'] ?? ''}',
-            'targetPressure': '${data['reducerTargetPressure'] ?? ''}',
-            'outletPressure': '${data['reducerOutletPressure'] ?? ''}',
-            'flow': '${data['reducerFlow'] ?? ''}',
-            'adjustment': '${data['reducerAdjustment'] ?? ''}',
-            'stability': '${data['reducerStability'] ?? ''}',
-            'response': '${data['reducerResponse'] ?? ''}',
-            'leakage': '${data['reducerLeakage'] ?? ''}',
-            'blockage': '${data['reducerBlockage'] ?? ''}',
-          },
-        ],
+        runs: reducerRuns.isEmpty
+            ? [
+                {
+                  'inletPressure': '${data['reducerInletPressure'] ?? ''}',
+                  'targetPressure': '${data['reducerTargetPressure'] ?? ''}',
+                  'outletPressure': '${data['reducerOutletPressure'] ?? ''}',
+                  'flow': '${data['reducerFlow'] ?? ''}',
+                  'adjustment': '${data['reducerAdjustment'] ?? ''}',
+                  'stability': '${data['reducerStability'] ?? ''}',
+                  'response': '${data['reducerResponse'] ?? ''}',
+                  'leakage': '${data['reducerLeakage'] ?? ''}',
+                  'blockage': '${data['reducerBlockage'] ?? ''}',
+                },
+              ]
+            : reducerRuns.map((run) => run.toJson()).toList(),
         result: '${data['step4Status'] ?? ''}',
         comments: '${data['step4Comments'] ?? ''}',
       );
@@ -511,22 +635,40 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
         comments: '${data['step7Comments'] ?? ''}',
       );
     } else if (step == 8) {
-      final alarmId = '${inspection!.id}:alarm:1';
-      records[alarmId] = AlarmTest(
-        id: alarmId,
-        inspectionId: inspection!.id,
-        alarmType: '${data['alarmType'] ?? ''}',
-        generated: data['alarmGenerated'] == 'yes',
-        detectedLocally: data['alarmDetected'] == 'yes',
-        reported: data['alarmReported'] == 'yes',
-        generatedAt: data['alarmGenerated'] == 'yes'
-            ? DateTime.now().toUtc()
-            : null,
-        latencyMs: '${data['alarmLatency'] ?? ''}',
-        acknowledged: data['alarmAcknowledged'] == 'yes',
-        result: '${data['alarmResult'] ?? ''}',
-        comments: '${data['step8Comments'] ?? ''}',
-      );
+      final attempts = alarmAttempts.where((value) => value.valid).toList();
+      for (final attempt in attempts) {
+        records[attempt.id] = AlarmTest(
+          id: attempt.id,
+          inspectionId: inspection!.id,
+          alarmType: attempt.alarmType,
+          generated: attempt.generated,
+          detectedLocally: attempt.detectedLocally,
+          reported: attempt.reported,
+          generatedAt: attempt.generatedAt,
+          latencyMs: attempt.latencyMs?.toString() ?? '',
+          acknowledged: attempt.acknowledged,
+          result: attempt.result,
+          comments: attempt.comments,
+        );
+      }
+      if (attempts.isEmpty) {
+        final alarmId = const Uuid().v4();
+        records[alarmId] = AlarmTest(
+          id: alarmId,
+          inspectionId: inspection!.id,
+          alarmType: '${data['alarmType'] ?? ''}',
+          generated: data['alarmGenerated'] == 'yes',
+          detectedLocally: data['alarmDetected'] == 'yes',
+          reported: data['alarmReported'] == 'yes',
+          generatedAt: data['alarmGenerated'] == 'yes'
+              ? DateTime.now().toUtc()
+              : null,
+          latencyMs: '${data['alarmLatency'] ?? ''}',
+          acknowledged: data['alarmAcknowledged'] == 'yes',
+          result: '${data['alarmResult'] ?? ''}',
+          comments: '${data['step8Comments'] ?? ''}',
+        );
+      }
       final leakageId = '${inspection!.id}:leakage:1';
       records[leakageId] = LeakageTest(
         id: leakageId,
@@ -662,7 +804,21 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
     final calculation = FunctionalResultEngine.calculate(
       inspection!.copyWith(stepData: _currentData()),
     );
-    final calculated = calculation.result;
+    final aggregate = const FunctionalAggregateResultService().calculate(
+      inspection: inspection!.copyWith(stepData: _currentData()),
+      valves: valveRecords,
+      reducerRuns: reducerRuns,
+      alarms: alarmAttempts,
+      series: _series,
+      instruments: [
+        for (final id in inspection!.instrumentIds)
+          if (_instrument(id) case final InstrumentRecord instrument)
+            instrument,
+      ],
+    );
+    final calculated = aggregate.criticalPending
+        ? aggregate.result
+        : calculation.result;
     final overrideName = _controller('resultOverride').text;
     final selected = overrideName.isEmpty
         ? calculated
@@ -682,7 +838,8 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
           ? 'No evaluable'
           : 'Revisada',
       finalComments: _controller('finalComments').text.trim(),
-      calculationRulesVersion: calculation.rulesVersion,
+      calculationRulesVersion:
+          '${calculation.rulesVersion}+${aggregate.formulaVersion}',
       inspectorOverrideReason: overrideReason,
       requiresRepair: selected == FunctionalOverallResult.requiresRepair,
       requiresReplacement:
@@ -694,7 +851,10 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
           selected != calculated ||
           selected == FunctionalOverallResult.requiresRepair ||
           selected == FunctionalOverallResult.requiresReplacement,
-      recommendedActions: calculation.reasons,
+      recommendedActions: {
+        ...calculation.reasons,
+        ...aggregate.reasons,
+      }.toList(),
       completedAt: DateTime.now().toUtc(),
       completedBy: state.user.id,
     );
@@ -1328,9 +1488,12 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
     }
   }
 
-  List<String> get _activeInstrumentIds => inspection!.instrumentIds
-      .where((id) => _instrument(id)?.deletedAt == null)
-      .toList();
+  List<String> get _activeInstrumentIds =>
+      inspection!.instrumentIds.where((id) {
+        final instrument = _instrument(id);
+        return instrument?.deletedAt == null &&
+            instrument?.lifecycleStatus == InstrumentLifecycleStatus.active;
+      }).toList();
 
   Future<void> _removeInstrument(InstrumentRecord record) async {
     final state = context.read<AppState>();
@@ -1344,7 +1507,10 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
       );
       return;
     }
-    final deleted = record.copyWith(deletedAt: DateTime.now().toUtc());
+    final deleted = record.copyWith(
+      deletedAt: DateTime.now().toUtc(),
+      lifecycleStatus: InstrumentLifecycleStatus.retired,
+    );
     await Hive.box<String>('instrument_records_v1').put(
       record.id,
       VersionedJsonCodec.encode(
@@ -1361,6 +1527,44 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
     await state.trace(
       'functional_instrument_removed',
       'Instrumento retirado lógicamente',
+      hydrantId: inspection!.hydrantId,
+      inspectionId: inspection!.id,
+      entityType: 'instrument',
+      entityId: record.id,
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _markInstrumentUnfit(InstrumentRecord record) async {
+    final state = context.read<AppState>();
+    final activeSeries = _series.any(
+      (series) => series.instrumentId == record.id && series.isActive,
+    );
+    if (activeSeries) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Finaliza o pausa la serie activa antes de cambiar el instrumento.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    final updated = record.copyWith(
+      lifecycleStatus: InstrumentLifecycleStatus.unfit,
+    );
+    await Hive.box<String>('instrument_records_v1').put(
+      record.id,
+      VersionedJsonCodec.encode(
+        schemaVersion: updated.schemaVersion,
+        payload: updated.toJson(),
+      ),
+    );
+    await state.trace(
+      'functional_instrument_unfit',
+      'Instrumento marcado como no apto',
       hydrantId: inspection!.hydrantId,
       inspectionId: inspection!.id,
       entityType: 'instrument',
@@ -1545,6 +1749,26 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
       return;
     }
     final now = DateTime.now().toUtc();
+    final snapshot = InstrumentSnapshot(
+      instrumentId: selectedInstrument.id,
+      type: selectedInstrument.type,
+      assetCode: selectedInstrument.assetCode,
+      brandText: selectedInstrument.brandText,
+      modelText: selectedInstrument.modelText,
+      serialNumber: selectedInstrument.serialNumber,
+      measurementRange: selectedInstrument.measurementRange,
+      unit: selectedInstrument.unit,
+      accuracyClass: selectedInstrument.accuracyClass,
+      calibrationStatus: selectedInstrument.calibrationStatus.name,
+      calibrationCertificate: selectedInstrument.calibrationCertificate,
+      condition: selectedInstrument.condition,
+      capturedAt: now,
+    );
+    await _saveCollectionRecord(
+      'instrument_snapshots_v1',
+      '${inspection!.id}:${selectedInstrument.id}:${now.microsecondsSinceEpoch}',
+      snapshot.toJson(),
+    );
     final seriesId = const Uuid().v4();
     final reading = MeasurementReading(
       id: const Uuid().v4(),
@@ -2081,18 +2305,98 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
     );
   }
 
-  Widget _stepBody(int step) => switch (step) {
-    1 => _preconditions(),
-    2 => _instruments(),
-    3 => _measurementStep(),
-    4 => _valvesAndReducerStep(),
-    5 => _solenoidStep(),
-    6 => _energyStep(),
-    7 => _communicationStep(),
-    8 => _alarmsAndLeakageStep(),
-    9 => _evidence(),
-    _ => _result(),
-  };
+  Widget _stepBody(int step) {
+    final body = switch (step) {
+      1 => _preconditions(),
+      2 => _instruments(),
+      3 => _measurementStep(),
+      4 => _valvesAndReducerStep(),
+      5 => _solenoidStep(),
+      6 => _energyStep(),
+      7 => _communicationStep(),
+      8 => _alarmsAndLeakageStep(),
+      9 => _evidence(),
+      _ => _result(),
+    };
+    return Column(
+      children: [
+        body,
+        if (step != 9 && _requirementsForStep(step).isNotEmpty) ...[
+          const SizedBox(height: 12),
+          for (final requirement in _requirementsForStep(step))
+            _evidenceCounter(requirement),
+        ],
+      ],
+    );
+  }
+
+  List<EvidenceRequirement> _requirementsForStep(int step) {
+    final categories = switch (step) {
+      1 => {'condición impeditiva'},
+      2 => {'instrumentos', 'banco de pruebas', 'montaje general'},
+      3 => {'presión', 'caudal', 'caudalímetro patrón'},
+      4 => {'válvula abierta', 'válvula cerrada', 'reductora'},
+      5 => {'solenoide'},
+      6 => {'energía'},
+      7 => {'comunicación', 'telemetría'},
+      8 => {'alarma', 'fuga'},
+      10 => {'estado final'},
+      _ => <String>{},
+    };
+    return inspection!.evidenceRequirements
+        .where((value) => categories.contains(value.category))
+        .toList();
+  }
+
+  List<InspectionPhoto> _photosForEvidence(EvidenceRequirement requirement) {
+    final box = Hive.box<String>('inspection_photos_v1');
+    final values = <InspectionPhoto>[];
+    for (final id in requirement.photoIds) {
+      final raw = box.get(id);
+      if (raw == null) continue;
+      try {
+        final photo = InspectionPhoto.fromJson(
+          Map<String, dynamic>.from(jsonDecode(raw) as Map),
+        );
+        if (photo.hydrantId == inspection!.hydrantId &&
+            photo.inspectionId == inspection!.id &&
+            photo.category == requirement.category) {
+          values.add(photo);
+        }
+      } on Object {
+        continue;
+      }
+    }
+    return values;
+  }
+
+  Widget _evidenceCounter(EvidenceRequirement requirement) => SectionCard(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          requirement.category,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        SectionPhotoCounter(
+          photos: _photosForEvidence(requirement),
+          requiredEvidence:
+              requirement.status == EvidenceRequirementStatus.pending,
+          onOpen: () =>
+              context.push('/hydrants/${inspection!.hydrantId}/gallery'),
+        ),
+        if (!readOnly)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: () => _captureEvidence(requirement),
+              icon: const Icon(Icons.add_a_photo_outlined),
+              label: const Text('Agregar evidencia'),
+            ),
+          ),
+      ],
+    ),
+  );
 
   Widget _measurementStep() => Column(
     children: [
@@ -2263,8 +2567,356 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
     ],
   );
 
+  Future<void> _editValve({
+    ValveRecord? existing,
+    bool duplicate = false,
+  }) async {
+    final type = TextEditingController(text: existing?.type ?? '');
+    final diameter = TextEditingController(text: existing?.diameter ?? '');
+    final position = TextEditingController(
+      text: existing?.initialPosition ?? '',
+    );
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          existing == null
+              ? 'Agregar válvula'
+              : duplicate
+              ? 'Duplicar válvula'
+              : 'Editar ${existing.label}',
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: type,
+              decoration: const InputDecoration(labelText: 'Tipo'),
+            ),
+            TextField(
+              controller: diameter,
+              decoration: const InputDecoration(labelText: 'Diámetro'),
+            ),
+            TextField(
+              controller: position,
+              decoration: const InputDecoration(labelText: 'Posición inicial'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Guardar'),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true) {
+      final now = DateTime.now().toUtc();
+      final order = duplicate || existing == null
+          ? valveRecords.length + 1
+          : existing.order;
+      final record = ValveRecord(
+        id: duplicate || existing == null ? const Uuid().v4() : existing.id,
+        inspectionId: inspection!.id,
+        order: order,
+        label: 'V$order',
+        type: type.text.trim(),
+        diameter: diameter.text.trim(),
+        initialPosition: position.text.trim(),
+        configuration: existing?.configuration ?? const {},
+        createdAt: duplicate || existing == null ? now : existing.createdAt,
+        updatedAt: now,
+      );
+      await _saveCollectionRecord(
+        'valve_records_v1',
+        record.id,
+        record.toJson(),
+      );
+      _loadFunctionalCollections(inspection!.id);
+      if (mounted) setState(() {});
+    }
+    type.dispose();
+    diameter.dispose();
+    position.dispose();
+  }
+
+  Future<void> _retireValve(ValveRecord record) async {
+    final json = record.toJson()
+      ..['retiredAt'] = DateTime.now().toUtc().toIso8601String()
+      ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+    await _saveCollectionRecord('valve_records_v1', record.id, json);
+    _loadFunctionalCollections(inspection!.id);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _moveValve(ValveRecord record, int delta) async {
+    final active = valveRecords.where((value) => value.active).toList();
+    final index = active.indexWhere((value) => value.id == record.id);
+    final target = index + delta;
+    if (index < 0 || target < 0 || target >= active.length) return;
+    final other = active[target];
+    final first = record.toJson()
+      ..['order'] = other.order
+      ..['label'] = 'V${other.order}'
+      ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+    final second = other.toJson()
+      ..['order'] = record.order
+      ..['label'] = 'V${record.order}'
+      ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+    await _saveCollectionRecord('valve_records_v1', record.id, first);
+    await _saveCollectionRecord('valve_records_v1', other.id, second);
+    _loadFunctionalCollections(inspection!.id);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _addReducerRun() async {
+    final inlet = TextEditingController(),
+        target = TextEditingController(),
+        outlet = TextEditingController(),
+        flow = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Agregar corrida de reductora'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: inlet,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Presión de entrada (kPa)',
+                ),
+              ),
+              TextField(
+                controller: target,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Presión objetivo (kPa)',
+                ),
+              ),
+              TextField(
+                controller: outlet,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Presión de salida (kPa)',
+                ),
+              ),
+              TextField(
+                controller: flow,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Caudal (L/s)'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Guardar'),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true) {
+      final now = DateTime.now().toUtc();
+      final run = ReducerRun(
+        reducerRunId: const Uuid().v4(),
+        reducerId: 'reducer:${inspection!.id}',
+        inspectionId: inspection!.id,
+        order: reducerRuns.length + 1,
+        conditionKey: 'default',
+        inletPressure: inlet.text.trim(),
+        targetPressure: target.text.trim(),
+        outletPressure: outlet.text.trim(),
+        flow: flow.text.trim(),
+        createdAt: now,
+        updatedAt: now,
+      );
+      await _saveCollectionRecord(
+        'reducer_runs_v1',
+        run.reducerRunId,
+        run.toJson(),
+      );
+      _loadFunctionalCollections(inspection!.id);
+      if (mounted) setState(() {});
+    }
+    inlet.dispose();
+    target.dispose();
+    outlet.dispose();
+    flow.dispose();
+  }
+
+  Future<void> _acceptReducerRun(ReducerRun selected) async {
+    for (final run in reducerRuns.where(
+      (value) => value.conditionKey == selected.conditionKey && value.valid,
+    )) {
+      final json = run.toJson()
+        ..['accepted'] = run.reducerRunId == selected.reducerRunId
+        ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+      await _saveCollectionRecord('reducer_runs_v1', run.reducerRunId, json);
+    }
+    _loadFunctionalCollections(inspection!.id);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _invalidateReducerRun(ReducerRun run) async {
+    final json = run.toJson()
+      ..['accepted'] = false
+      ..['invalidatedAt'] = DateTime.now().toUtc().toIso8601String()
+      ..['invalidatedBy'] = context.read<AppState>().user.id
+      ..['invalidationReason'] = 'Invalidada por el técnico';
+    await _saveCollectionRecord('reducer_runs_v1', run.reducerRunId, json);
+    _loadFunctionalCollections(inspection!.id);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _addAlarmAttempt() async {
+    String type = FunctionalCatalogs.alarmTypes.first;
+    final other = TextEditingController(), comments = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (_, setLocal) => AlertDialog(
+          title: const Text('Agregar intento de alarma'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: type,
+                items: [
+                  for (final value in FunctionalCatalogs.alarmTypes)
+                    DropdownMenuItem(value: value, child: Text(value)),
+                ],
+                onChanged: (value) => setLocal(() => type = value!),
+                decoration: const InputDecoration(labelText: 'Tipo'),
+              ),
+              if (type.toLowerCase() == 'otra')
+                TextField(
+                  controller: other,
+                  decoration: const InputDecoration(
+                    labelText: 'Descripción obligatoria',
+                  ),
+                ),
+              TextField(
+                controller: comments,
+                decoration: const InputDecoration(
+                  labelText: 'Comentarios opcionales',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed:
+                  type.toLowerCase() == 'otra' && other.text.trim().isEmpty
+                  ? null
+                  : () => Navigator.pop(dialogContext, true),
+              child: const Text('Agregar'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (accepted == true) {
+      final attempt = AlarmAttemptRecord(
+        id: const Uuid().v4(),
+        inspectionId: inspection!.id,
+        alarmType: type,
+        otherDescription: other.text.trim(),
+        attemptNumber:
+            alarmAttempts.where((value) => value.alarmType == type).length + 1,
+        comments: comments.text.trim(),
+        createdAt: DateTime.now().toUtc(),
+      );
+      await _saveCollectionRecord(
+        'alarm_attempts_v1',
+        attempt.id,
+        attempt.toJson(),
+      );
+      _loadFunctionalCollections(inspection!.id);
+      if (mounted) setState(() {});
+    }
+    other.dispose();
+    comments.dispose();
+  }
+
   Widget _valvesAndReducerStep() => Column(
     children: [
+      SectionCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Válvulas del hidrante',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Agregar válvula',
+                  onPressed: () => _editValve(),
+                  icon: const Icon(Icons.add_circle_outline),
+                ),
+              ],
+            ),
+            if (valveRecords.where((value) => value.active).isEmpty)
+              const Text('Sin válvulas registradas.')
+            else
+              for (final valve in valveRecords.where((value) => value.active))
+                ListTile(
+                  title: Text(
+                    '${valve.label} · ${valve.type.isEmpty ? 'Tipo no indicado' : valve.type}',
+                  ),
+                  subtitle: Text(
+                    'Diámetro: ${valve.diameter.isEmpty ? 'No indicado' : valve.diameter} · Posición: ${valve.initialPosition.isEmpty ? 'No indicada' : valve.initialPosition}',
+                  ),
+                  trailing: PopupMenuButton<String>(
+                    onSelected: (action) => switch (action) {
+                      'edit' => _editValve(existing: valve),
+                      'duplicate' => _editValve(
+                        existing: valve,
+                        duplicate: true,
+                      ),
+                      'up' => _moveValve(valve, -1),
+                      'down' => _moveValve(valve, 1),
+                      _ => _retireValve(valve),
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'edit', child: Text('Editar')),
+                      PopupMenuItem(
+                        value: 'duplicate',
+                        child: Text('Duplicar configuración'),
+                      ),
+                      PopupMenuItem(value: 'up', child: Text('Mover arriba')),
+                      PopupMenuItem(value: 'down', child: Text('Mover abajo')),
+                      PopupMenuItem(
+                        value: 'retire',
+                        child: Text('Retirar lógicamente'),
+                      ),
+                    ],
+                  ),
+                ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 12),
       SectionCard(
         child: ExpansionTile(
           initiallyExpanded: true,
@@ -2327,6 +2979,63 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
               ('severe', 'Severa'),
             ]),
             _textField('valvePressureBehavior', 'Comportamiento de presión'),
+          ],
+        ),
+      ),
+      const SizedBox(height: 12),
+      SectionCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Corridas registradas',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Agregar corrida',
+                  onPressed: _addReducerRun,
+                  icon: const Icon(Icons.add_chart),
+                ),
+              ],
+            ),
+            for (final run in reducerRuns)
+              ListTile(
+                enabled: run.valid,
+                leading: Icon(
+                  run.accepted
+                      ? Icons.check_circle
+                      : run.valid
+                      ? Icons.science_outlined
+                      : Icons.block,
+                ),
+                title: Text(
+                  'Corrida ${run.order} · ${run.result.isEmpty ? 'Borrador' : run.result}',
+                ),
+                subtitle: Text(
+                  'Entrada ${run.inletPressure} kPa · Objetivo ${run.targetPressure} kPa · Salida ${run.outletPressure} kPa · ${run.flow} L/s',
+                ),
+                trailing: run.valid
+                    ? PopupMenuButton<String>(
+                        onSelected: (action) => action == 'accept'
+                            ? _acceptReducerRun(run)
+                            : _invalidateReducerRun(run),
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(
+                            value: 'accept',
+                            child: Text('Aceptar corrida'),
+                          ),
+                          PopupMenuItem(
+                            value: 'invalidate',
+                            child: Text('Invalidar'),
+                          ),
+                        ],
+                      )
+                    : null,
+              ),
           ],
         ),
       ),
@@ -2557,6 +3266,48 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
 
   Widget _alarmsAndLeakageStep() => Column(
     children: [
+      SectionCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Intentos de alarma',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Agregar intento',
+                  onPressed: _addAlarmAttempt,
+                  icon: const Icon(Icons.add_alert_outlined),
+                ),
+              ],
+            ),
+            if (alarmAttempts.isEmpty) const Text('Sin intentos registrados.'),
+            for (final attempt in alarmAttempts)
+              ListTile(
+                leading: Icon(
+                  attempt.valid
+                      ? Icons.notifications_active_outlined
+                      : Icons.block,
+                ),
+                title: Text(
+                  '${attempt.alarmType} · intento ${attempt.attemptNumber}',
+                ),
+                subtitle: Text(
+                  attempt.valid
+                      ? (attempt.result.isEmpty
+                            ? 'Borrador independiente'
+                            : attempt.result)
+                      : 'Intento invalidado',
+                ),
+              ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 12),
       SectionCard(
         child: ExpansionTile(
           initiallyExpanded: true,
@@ -2884,8 +3635,11 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
         ),
         isThreeLine: true,
         trailing: PopupMenuButton<String>(
-          onSelected: (_) => _removeInstrument(item),
+          onSelected: (action) => action == 'unfit'
+              ? _markInstrumentUnfit(item)
+              : _removeInstrument(item),
           itemBuilder: (_) => const [
+            PopupMenuItem(value: 'unfit', child: Text('Marcar no apto')),
             PopupMenuItem(value: 'remove', child: Text('Retirar instrumento')),
           ],
           icon:
@@ -2956,28 +3710,46 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
     children: [
       for (final item in inspection!.evidenceRequirements)
         Card(
-          child: ListTile(
-            title: Text(item.category),
-            subtitle: Text(item.status.name),
-            trailing: PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value == 'photo') {
-                  _captureEvidence(item);
-                } else {
-                  _setEvidenceStatus(
-                    item,
-                    value == 'na'
-                        ? EvidenceRequirementStatus.notApplicable
-                        : EvidenceRequirementStatus.notPerformed,
-                  );
-                }
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'photo', child: Text('Tomar fotografía')),
-                PopupMenuItem(value: 'na', child: Text('No aplica')),
-                PopupMenuItem(value: 'nr', child: Text('No realizada')),
-              ],
-            ),
+          child: Column(
+            children: [
+              ListTile(
+                title: Text(item.category),
+                subtitle: Text(item.status.name),
+                trailing: PopupMenuButton<String>(
+                  onSelected: (value) {
+                    if (value == 'photo') {
+                      _captureEvidence(item);
+                    } else {
+                      _setEvidenceStatus(
+                        item,
+                        value == 'na'
+                            ? EvidenceRequirementStatus.notApplicable
+                            : EvidenceRequirementStatus.notPerformed,
+                      );
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(
+                      value: 'photo',
+                      child: Text('Tomar fotografía'),
+                    ),
+                    PopupMenuItem(value: 'na', child: Text('No aplica')),
+                    PopupMenuItem(value: 'nr', child: Text('No realizada')),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: SectionPhotoCounter(
+                  photos: _photosForEvidence(item),
+                  requiredEvidence:
+                      item.status == EvidenceRequirementStatus.pending,
+                  onOpen: () => context.push(
+                    '/hydrants/${inspection!.hydrantId}/gallery',
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
     ],

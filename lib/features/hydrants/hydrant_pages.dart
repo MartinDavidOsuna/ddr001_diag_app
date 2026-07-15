@@ -12,6 +12,7 @@ import '../../domain/filters/hydrant_filter_request.dart';
 import '../../domain/models/app_models.dart';
 import '../../domain/filters/hydrant_query_projection.dart';
 import '../../domain/functional/functional_models.dart';
+import '../../domain/inspections/visual_inspection.dart';
 import 'widgets/auto_visible_filter_bar.dart';
 
 String statusLabel(InspectionStatus s) => switch (s) {
@@ -388,6 +389,10 @@ class HydrantDetailPage extends StatelessWidget {
     final state = context.watch<AppState>();
     final h = state.hydrant(id);
     final functionalSummary = state.functionalSummary(id);
+    final visualHistory = state.visualInspectionRepository.forHydrant(id);
+    final functionalHistory = state.functionalInspectionRepository.forHydrant(
+      id,
+    );
     return Scaffold(
       appBar: AppPageHeader(title: h.code, subtitle: h.locality),
       body: ListView(
@@ -401,7 +406,7 @@ class HydrantDetailPage extends StatelessWidget {
                   SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Actualización obligatoria: puedes consultar datos y sincronizar, pero no iniciar o editar diagnósticos nuevos.',
+                      'Actualización obligatoria: puedes terminar borradores existentes, consultar y sincronizar. No puedes iniciar trabajos nuevos.',
                       style: TextStyle(
                         color: AppColors.red,
                         fontWeight: FontWeight.w700,
@@ -461,7 +466,9 @@ class HydrantDetailPage extends StatelessWidget {
           if (functionalSummary.status == InspectionStatus.completed) ...[
             const SizedBox(height: 8),
             OutlinedButton.icon(
-              onPressed: () => _startFunctionalRepeat(context, state, h),
+              onPressed: state.editingRestricted
+                  ? null
+                  : () => _startFunctionalRepeat(context, state, h),
               icon: const Icon(Icons.replay),
               label: const Text('Iniciar nueva prueba de REPORTE FUNCIONAL'),
             ),
@@ -480,9 +487,158 @@ class HydrantDetailPage extends StatelessWidget {
             icon: const Icon(Icons.photo_library_outlined),
             label: const Text('Abrir galería local'),
           ),
+          if (visualHistory.length > 1 || functionalHistory.length > 1) ...[
+            const SizedBox(height: 12),
+            SectionCard(
+              child: ExpansionTile(
+                title: const Text('Original y revisiones'),
+                children: [
+                  for (final report in visualHistory)
+                    ListTile(
+                      title: Text(
+                        'RV · ${report.revisionNumber == 0 ? 'Original' : 'Revisión ${report.revisionNumber}'}',
+                      ),
+                      subtitle: Text(
+                        '${report.revisionReason.isEmpty ? 'Sin motivo de revisión' : report.revisionReason}\n${report.updatedAt.toLocal()}${report.activeRevision ? ' · Vigente' : ''}',
+                      ),
+                    ),
+                  for (final report in functionalHistory)
+                    ListTile(
+                      title: Text(
+                        'RF · ${report.revisionNumber == 0 ? 'Original' : 'Revisión ${report.revisionNumber}'}',
+                      ),
+                      subtitle: Text(
+                        '${report.revisionReason.isEmpty ? 'Sin motivo de revisión' : report.revisionReason}\n${report.updatedAt.toLocal()}${report.activeRevision ? ' · Vigente' : ''}',
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          if (state.user.role.toLowerCase().contains('supervisor') &&
+              (visualHistory.any(
+                    (report) => report.status == InspectionStatus.completed,
+                  ) ||
+                  functionalHistory.any(
+                    (report) =>
+                        report.status == FunctionalInspectionStatus.completed,
+                  ))) ...[
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: () => _createRevision(
+                context,
+                state,
+                visualHistory: visualHistory,
+                functionalHistory: functionalHistory,
+              ),
+              icon: const Icon(Icons.history_edu_outlined),
+              label: const Text('Crear revisión supervisada'),
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  Future<void> _createRevision(
+    BuildContext context,
+    AppState state, {
+    required List<VisualInspection> visualHistory,
+    required List<FunctionalInspection> functionalHistory,
+  }) async {
+    String type =
+        visualHistory.any(
+          (report) => report.status == InspectionStatus.completed,
+        )
+        ? 'visual'
+        : 'functional';
+    final reasonController = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (_, setLocal) => AlertDialog(
+          title: const Text('Crear revisión de reporte'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: type,
+                items: [
+                  if (visualHistory.any(
+                    (report) => report.status == InspectionStatus.completed,
+                  ))
+                    const DropdownMenuItem(
+                      value: 'visual',
+                      child: Text('REPORTE VISUAL'),
+                    ),
+                  if (functionalHistory.any(
+                    (report) =>
+                        report.status == FunctionalInspectionStatus.completed,
+                  ))
+                    const DropdownMenuItem(
+                      value: 'functional',
+                      child: Text('REPORTE FUNCIONAL'),
+                    ),
+                ],
+                onChanged: (value) => setLocal(() => type = value!),
+              ),
+              TextField(
+                controller: reasonController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Motivo obligatorio',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Crear revisión'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final reason = reasonController.text.trim();
+    reasonController.dispose();
+    if (accepted != true || reason.isEmpty) return;
+    if (type == 'visual') {
+      final original = visualHistory.firstWhere(
+        (report) => report.status == InspectionStatus.completed,
+      );
+      await state.visualInspectionRepository.createRevision(
+        original,
+        state.user,
+        reason,
+      );
+    } else {
+      final original = functionalHistory.firstWhere(
+        (report) => report.status == FunctionalInspectionStatus.completed,
+      );
+      await state.functionalInspectionRepository.createRevision(
+        original,
+        state.user,
+        reason,
+      );
+    }
+    await state.trace(
+      'report_revision_created',
+      'Revisión supervisada creada',
+      hydrantId: id,
+      reason: reason,
+    );
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Revisión creada como borrador independiente.'),
+        ),
+      );
+    }
   }
 
   void _openInspection(
@@ -514,6 +670,17 @@ class HydrantDetailPage extends StatelessWidget {
     Hydrant hydrant,
     InspectionSummary summary,
   ) async {
+    if (state.editingRestricted &&
+        !state.functionalInspectionRepository.hasActive(id)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'La actualización obligatoria bloquea nuevos reportes. Los borradores existentes siguen disponibles.',
+          ),
+        ),
+      );
+      return;
+    }
     if (state.functionalEligibilityRepository.find(id)?.allowed != true &&
         !state.functionalInspectionRepository.hasActive(id)) {
       final controller = TextEditingController();

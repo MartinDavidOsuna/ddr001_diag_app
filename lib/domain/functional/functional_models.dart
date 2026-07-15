@@ -35,6 +35,8 @@ enum InstrumentIdentificationStatus {
   notIdentified,
 }
 
+enum InstrumentLifecycleStatus { active, retired, unfit, logicallyDeleted }
+
 enum MeasurementSource {
   manual,
   bluetooth,
@@ -253,6 +255,7 @@ class InstrumentRecord {
     this.comments = '',
     this.photoIds = const [],
     this.deletedAt,
+    this.lifecycleStatus = InstrumentLifecycleStatus.active,
     this.schemaVersion = 1,
   });
   final String id,
@@ -272,9 +275,13 @@ class InstrumentRecord {
   final InstrumentIdentificationStatus identificationStatus;
   final DateTime? calibrationDate, calibrationDueDate, deletedAt;
   final CalibrationStatus calibrationStatus;
+  final InstrumentLifecycleStatus lifecycleStatus;
   final List<String> photoIds;
   final int schemaVersion;
-  InstrumentRecord copyWith({DateTime? deletedAt}) => InstrumentRecord(
+  InstrumentRecord copyWith({
+    DateTime? deletedAt,
+    InstrumentLifecycleStatus? lifecycleStatus,
+  }) => InstrumentRecord(
     id: id,
     inspectionId: inspectionId,
     type: type,
@@ -295,6 +302,7 @@ class InstrumentRecord {
     comments: comments,
     photoIds: photoIds,
     deletedAt: deletedAt ?? this.deletedAt,
+    lifecycleStatus: lifecycleStatus ?? this.lifecycleStatus,
     schemaVersion: schemaVersion,
   );
   Map<String, dynamic> toJson() => {
@@ -320,6 +328,7 @@ class InstrumentRecord {
     'comments': comments,
     'photoIds': photoIds,
     'deletedAt': _nullableDateToJson(deletedAt),
+    'lifecycleStatus': lifecycleStatus.name,
     'schemaVersion': schemaVersion,
   };
   factory InstrumentRecord.fromJson(
@@ -353,6 +362,13 @@ class InstrumentRecord {
     comments: json['comments'] as String? ?? '',
     photoIds: _strings(json['photoIds']),
     deletedAt: _nullableDate(json['deletedAt']),
+    lifecycleStatus: _enum(
+      InstrumentLifecycleStatus.values,
+      json['lifecycleStatus'],
+      json['deletedAt'] == null
+          ? InstrumentLifecycleStatus.active
+          : InstrumentLifecycleStatus.retired,
+    ),
     schemaVersion: json['schemaVersion'] as int? ?? 1,
   );
 }
@@ -1141,6 +1157,12 @@ class FunctionalInspection {
     this.provenance = const [],
     this.stepData = const {},
     this.result = const FunctionalInspectionResult(),
+    this.revisionOfReportId,
+    this.revisionNumber = 0,
+    this.previousRevisionId,
+    this.revisionReason = '',
+    this.activeRevision = true,
+    this.supervisorReviewRequired = false,
     this.schemaVersion = 1,
   });
   final String id,
@@ -1156,12 +1178,15 @@ class FunctionalInspection {
       parallelTestAuthorizationId,
       repeatOfInspectionId,
       visualInspectionId;
+  final String? revisionOfReportId, previousRevisionId;
+  final String revisionReason;
   final HydrantSource source;
   final FunctionalInspectionStatus status;
-  final int currentStep, currentSubstep, schemaVersion;
+  final int currentStep, currentSubstep, schemaVersion, revisionNumber;
   final DateTime startedAt, createdAt, updatedAt;
   final DateTime? completedAt;
   final bool visitWithoutTest;
+  final bool activeRevision, supervisorReviewRequired;
   final FunctionalPreconditions preconditions;
   final List<String> instrumentIds,
       measurementSeriesIds,
@@ -1191,6 +1216,12 @@ class FunctionalInspection {
     List<FunctionalFieldProvenance>? provenance,
     Map<String, dynamic>? stepData,
     FunctionalInspectionResult? result,
+    String? revisionOfReportId,
+    int? revisionNumber,
+    String? previousRevisionId,
+    String? revisionReason,
+    bool? activeRevision,
+    bool? supervisorReviewRequired,
   }) => FunctionalInspection(
     id: id,
     hydrantId: hydrantId,
@@ -1223,6 +1254,13 @@ class FunctionalInspection {
     provenance: provenance ?? this.provenance,
     stepData: stepData ?? this.stepData,
     result: result ?? this.result,
+    revisionOfReportId: revisionOfReportId ?? this.revisionOfReportId,
+    revisionNumber: revisionNumber ?? this.revisionNumber,
+    previousRevisionId: previousRevisionId ?? this.previousRevisionId,
+    revisionReason: revisionReason ?? this.revisionReason,
+    activeRevision: activeRevision ?? this.activeRevision,
+    supervisorReviewRequired:
+        supervisorReviewRequired ?? this.supervisorReviewRequired,
     schemaVersion: schemaVersion,
   );
   Map<String, dynamic> toJson() => {
@@ -1259,6 +1297,12 @@ class FunctionalInspection {
     'provenance': provenance.map((v) => v.toJson()).toList(),
     'stepData': stepData,
     'result': result.toJson(),
+    'revisionOfReportId': revisionOfReportId,
+    'revisionNumber': revisionNumber,
+    'previousRevisionId': previousRevisionId,
+    'revisionReason': revisionReason,
+    'activeRevision': activeRevision,
+    'supervisorReviewRequired': supervisorReviewRequired,
     'schemaVersion': schemaVersion,
   };
   factory FunctionalInspection.fromJson(
@@ -1309,6 +1353,12 @@ class FunctionalInspection {
     result: FunctionalInspectionResult.fromJson(
       Map<String, dynamic>.from(j['result'] as Map? ?? {}),
     ),
+    revisionOfReportId: j['revisionOfReportId'] as String?,
+    revisionNumber: j['revisionNumber'] as int? ?? 0,
+    previousRevisionId: j['previousRevisionId'] as String?,
+    revisionReason: j['revisionReason'] as String? ?? '',
+    activeRevision: j['activeRevision'] as bool? ?? true,
+    supervisorReviewRequired: j['supervisorReviewRequired'] as bool? ?? false,
     schemaVersion: j['schemaVersion'] as int? ?? 1,
   );
 }

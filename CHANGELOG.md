@@ -4,6 +4,13 @@ Todos los cambios notables de **DIAGNOSTICO HIDRANTES** se documentan aquí.
 
 ## Unreleased — Etapa 3
 
+- Etapa 4C liga una prueba HTTPS mínima a un `Network` celular Android y separa capacidades INTERNET/VALIDATED del resultado HTTP.
+- La evaluación Wi-Fi permanece manual y ahora aplica ramas condicionales con normalización persistida y validación central.
+- Etapa 4B agrega máquina de estados común, inmutabilidad y revisiones para RV/RF.
+- Se incorporan journal recuperable, auditor de integridad, cuarentena y recuperación conservadora al arranque.
+- RF incorpora colecciones UUID de válvulas, corridas de reductora y alarmas, snapshots de instrumentos y resultado agregado.
+- Medios incorporan reconciliación; galería aísla corrupción, conserva filtros y carga miniaturas incrementalmente.
+- Nuevo levantamiento RV + RF queda coordinado mediante journal; sincronización local prepara idempotencia y dependencias para una API futura.
 - Diagnóstico automático limitado a GPRS/red celular, con contador máximo de 60 segundos y resultados diferenciados.
 - Evaluación Wi-Fi manual mediante respuestas explícitas, sin escaneo de redes ni permisos adicionales.
 - Etapa 4 inicia estabilización local: respuestas trivalentes RV persistentes, ubicación automática, diagnóstico de red parcial honesto, resolución central de RV finalizado, navegación RF y traducciones visibles.

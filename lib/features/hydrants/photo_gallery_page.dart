@@ -19,14 +19,49 @@ class PhotoGalleryPage extends StatefulWidget {
 class _PhotoGalleryPageState extends State<PhotoGalleryPage> {
   String category = 'Todas';
   String report = 'Todos';
+  int visibleLimit = 100;
+  List<InspectionPhoto> _all = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    final saved = Hive.box<String>('gallery_ui_state_v1').get(widget.hydrantId);
+    if (saved != null) {
+      try {
+        final value = Map<String, dynamic>.from(jsonDecode(saved) as Map);
+        category = value['category'] as String? ?? category;
+        report = value['report'] as String? ?? report;
+      } on Object {
+        // Invalid UI preference is safely ignored.
+      }
+    }
+    _loadPhotos();
+  }
+
+  void _loadPhotos() {
+    final values = <InspectionPhoto>[];
+    for (final raw in Hive.box<String>('inspection_photos_v1').values) {
+      try {
+        final photo = InspectionPhoto.fromJson(
+          Map<String, dynamic>.from(jsonDecode(raw) as Map),
+        );
+        if (photo.hydrantId == widget.hydrantId && !photo.isDeleted) {
+          values.add(photo);
+        }
+      } on Object {
+        // Corrupt photo documents remain available to the integrity auditor.
+      }
+    }
+    values.sort((a, b) => b.capturedAt.compareTo(a.capturedAt));
+    _all = values;
+  }
+
+  Future<void> _saveFilters() => Hive.box<String>(
+    'gallery_ui_state_v1',
+  ).put(widget.hydrantId, jsonEncode({'category': category, 'report': report}));
 
   List<InspectionPhoto> get photos {
-    final result = Hive.box<String>('inspection_photos_v1').values
-        .map(
-          (value) => InspectionPhoto.fromJson(
-            Map<String, dynamic>.from(jsonDecode(value) as Map),
-          ),
-        )
+    final result = _all
         .where(
           (photo) => photo.hydrantId == widget.hydrantId && !photo.isDeleted,
         )
@@ -39,8 +74,8 @@ class _PhotoGalleryPageState extends State<PhotoGalleryPage> {
                   photo.inspectionType == 'f02B'),
         )
         .where((photo) => category == 'Todas' || photo.category == category)
+        .take(visibleLimit)
         .toList();
-    result.sort((a, b) => b.capturedAt.compareTo(a.capturedAt));
     return result;
   }
 
@@ -69,8 +104,13 @@ class _PhotoGalleryPageState extends State<PhotoGalleryPage> {
                 ),
               ],
               selected: {report},
-              onSelectionChanged: (value) =>
-                  setState(() => report = value.first),
+              onSelectionChanged: (value) {
+                setState(() {
+                  report = value.first;
+                  visibleLimit = 100;
+                });
+                _saveFilters();
+              },
             ),
           ),
           SizedBox(
@@ -116,7 +156,13 @@ class _PhotoGalleryPageState extends State<PhotoGalleryPage> {
                           child: ChoiceChip(
                             label: Text(item),
                             selected: category == item,
-                            onSelected: (_) => setState(() => category = item),
+                            onSelected: (_) {
+                              setState(() {
+                                category = item;
+                                visibleLimit = 100;
+                              });
+                              _saveFilters();
+                            },
                           ),
                         ),
                       )
@@ -136,8 +182,17 @@ class _PhotoGalleryPageState extends State<PhotoGalleryPage> {
                           mainAxisSpacing: 10,
                           crossAxisSpacing: 10,
                         ),
-                    itemCount: items.length,
-                    itemBuilder: (_, index) => _PhotoTile(photo: items[index]),
+                    itemCount:
+                        items.length + (items.length == visibleLimit ? 1 : 0),
+                    itemBuilder: (_, index) => index == items.length
+                        ? Center(
+                            child: OutlinedButton(
+                              onPressed: () =>
+                                  setState(() => visibleLimit += 100),
+                              child: const Text('Cargar más'),
+                            ),
+                          )
+                        : _PhotoTile(photo: items[index]),
                   ),
           ),
         ],

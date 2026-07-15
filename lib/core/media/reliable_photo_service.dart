@@ -11,6 +11,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../domain/media/inspection_photo.dart';
+import '../../domain/integrity/operation_journal.dart';
+import '../../data/local/operation_journal_repository.dart';
 import 'image_processing_service.dart';
 
 class ReliablePhotoService {
@@ -41,6 +43,10 @@ class ReliablePhotoService {
     if (picked == null) return null;
     _processing = true;
     File? temporary;
+    OperationJournalEntry? operation;
+    final journal = OperationJournalRepository(
+      Hive.box<String>('operation_journal_v1'),
+    );
     try {
       final source = File(picked.path);
       if (!await source.exists() || await source.length() == 0) {
@@ -67,6 +73,19 @@ class ReliablePhotoService {
       );
       await root.create(recursive: true);
       final id = const Uuid().v4();
+      operation = OperationJournalEntry(
+        operationId: const Uuid().v4(),
+        operationType: JournalOperationType.capturePhoto,
+        entityIds: [id, inspectionId],
+        documentWrites: [id],
+        fileWrites: ['$id.jpg', '${id}_thumb.jpg'],
+        queueWrites: [id],
+        preparedAt: DateTime.now().toUtc(),
+        actor: userId,
+        deviceId: deviceId,
+        correlationId: id,
+      );
+      await journal.save(operation);
       temporary = File(p.join(root.path, '$id.tmp.jpg'));
       final processed = await processor.normalize(source, temporary.path);
       final finalFile = File(p.join(root.path, '$id.jpg'));
@@ -125,8 +144,22 @@ class ReliablePhotoService {
       final photos = Hive.box<String>('inspection_photos_v1');
       final queue = Hive.box<String>('media_work_queue_v1');
       await photos.put(id, jsonEncode(photo.toJson()));
+      operation = operation.advance(JournalStatus.documentsWritten);
+      await journal.save(operation);
       await queue.put(id, 'pendingUpload');
+      await journal.save(
+        operation
+            .advance(JournalStatus.queueWritten)
+            .advance(JournalStatus.committed),
+      );
       return photo;
+    } on Object catch (error) {
+      if (operation != null) {
+        await journal.save(
+          operation.advance(JournalStatus.needsRecovery, error: '$error'),
+        );
+      }
+      rethrow;
     } finally {
       if (temporary != null && await temporary.exists()) {
         await temporary.delete();

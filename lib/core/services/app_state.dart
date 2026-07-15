@@ -10,6 +10,7 @@ import '../../data/mock/demo_data.dart';
 import '../../data/services/mock_assignment_sync_service.dart';
 import '../../data/local/visual_inspection_repository.dart';
 import '../../data/local/functional_repositories.dart';
+import '../../data/local/sync_queue_repository.dart';
 import '../../domain/media/media_sync_status.dart';
 import '../../domain/media/inspection_photo.dart';
 import '../../domain/enums/app_enums.dart';
@@ -40,6 +41,9 @@ class AppState extends ChangeNotifier {
   final VisualInspectionRepository visualInspectionRepository;
   final FunctionalEligibilityRepository functionalEligibilityRepository;
   final FunctionalInspectionRepository functionalInspectionRepository;
+  late final SyncQueueRepository syncQueueRepository = SyncQueueRepository(
+    syncBox,
+  );
   final updateService = UpdateService(remoteManifestUrl: '');
   final assignmentSyncService = MockAssignmentSyncService();
   final user = demoUser;
@@ -65,17 +69,12 @@ class AppState extends ChangeNotifier {
       '${packageInfo.version}+${packageInfo.buildNumber}';
   int get installedBuild => int.tryParse(packageInfo.buildNumber) ?? 0;
   bool get editingRestricted => updateInfo?.status == UpdateStatus.required;
-  int get pendingDiagnostics => syncBox.values.where((value) {
-    if (value == 'Sincronizado') return false;
-    try {
-      final item = SyncQueueItem.fromJson(
-        Map<String, dynamic>.from(jsonDecode(value) as Map),
-      );
-      return item.status != SyncQueueStatus.synced;
-    } on Object {
-      return true;
-    }
-  }).length;
+  int get pendingDiagnostics =>
+      syncQueueRepository
+          .all()
+          .where((item) => item.status != SyncQueueStatus.synced)
+          .length +
+      syncQueueRepository.unreadableCount;
   int get pendingPhotos =>
       mediaBox.values.where((v) => v != MediaSyncStatus.verified.name).length;
   int get verifiedPhotos =>
@@ -462,10 +461,12 @@ class AppState extends ChangeNotifier {
       inspectionId: inspectionId,
       hydrantId: hydrantId,
       dependencyIds: dependencyIds,
+      idempotencyKey: id,
+      correlationId: const Uuid().v4(),
       createdAt: now,
       updatedAt: now,
     );
-    await syncBox.put(id, jsonEncode(item.toJson()));
+    await syncQueueRepository.save(item);
     notifyListeners();
   }
 
@@ -531,8 +532,16 @@ class AppState extends ChangeNotifier {
           hydrantId: current.hydrantId,
           operation: current.operation,
           dependencyIds: current.dependencyIds,
+          idempotencyKey: current.idempotencyKey,
+          payloadVersion: current.payloadVersion,
+          revision: current.revision,
+          baseRevision: current.baseRevision,
+          tombstone: current.tombstone,
           status: SyncQueueStatus.synced,
           attempts: current.attempts + 1,
+          nextAttemptAt: current.nextAttemptAt,
+          conflictStatus: current.conflictStatus,
+          correlationId: current.correlationId,
           createdAt: current.createdAt,
           updatedAt: DateTime.now().toUtc(),
           schemaVersion: current.schemaVersion,

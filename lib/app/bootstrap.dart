@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -6,6 +8,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/services/app_state.dart';
 import '../data/local/visual_inspection_repository.dart';
 import '../data/local/functional_repositories.dart';
+import '../data/local/integrity_audit_service.dart';
+import '../data/local/operation_journal_repository.dart';
+import '../data/local/quarantine_repository.dart';
+import '../data/local/recovery_coordinator.dart';
+import '../data/local/media_reconciliation_service.dart';
 
 Future<AppState> bootstrap() async {
   await initializeDateFormatting('es');
@@ -38,6 +45,29 @@ Future<AppState> bootstrap() async {
   await Hive.openBox<String>('alarm_tests_v1');
   await Hive.openBox<String>('functional_results_v1');
   await Hive.openBox<String>('functional_test_records_v1');
+  final operationJournalBox = await Hive.openBox<String>(
+    'operation_journal_v1',
+  );
+  final quarantineBox = await Hive.openBox<String>('quarantine_documents_v1');
+  await Hive.openBox<String>('report_revisions_v1');
+  await Hive.openBox<String>('valve_records_v1');
+  await Hive.openBox<String>('reducer_runs_v1');
+  await Hive.openBox<String>('alarm_attempts_v1');
+  await Hive.openBox<String>('instrument_snapshots_v1');
+  final integrityReportBox = await Hive.openBox<String>(
+    'integrity_audit_reports_v1',
+  );
+  await Hive.openBox<String>('gallery_ui_state_v1');
+  final recovery = await RecoveryCoordinator(
+    auditService: const IntegrityAuditService(),
+    journal: OperationJournalRepository(operationJournalBox),
+    quarantine: QuarantineRepository(quarantineBox),
+  ).runLightweight();
+  await integrityReportBox.put(
+    recovery.audit.id,
+    jsonEncode(recovery.audit.toJson()),
+  );
+  await const MediaReconciliationService().reconcile();
   final preferences = await SharedPreferences.getInstance();
   final packageInfo = await PackageInfo.fromPlatform();
   final state = AppState(

@@ -15,19 +15,30 @@ class SyncQueueItem {
     this.hydrantId,
     this.operation = 'upsert',
     this.dependencyIds = const [],
+    this.idempotencyKey = '',
+    this.payloadVersion = 1,
+    this.revision = 1,
+    this.baseRevision = 0,
+    this.tombstone = false,
     this.status = SyncQueueStatus.pending,
     this.attempts = 0,
     this.lastError,
+    this.nextAttemptAt,
+    this.conflictStatus = 'none',
+    this.correlationId = '',
     required this.createdAt,
     required this.updatedAt,
     this.schemaVersion = 1,
   });
-  final String id, entityType, entityId, operation;
+  final String id, entityType, entityId, operation, idempotencyKey;
+  final String conflictStatus, correlationId;
   final String? inspectionId, hydrantId, lastError;
   final List<String> dependencyIds;
   final SyncQueueStatus status;
-  final int attempts, schemaVersion;
+  final int attempts, schemaVersion, payloadVersion, revision, baseRevision;
+  final bool tombstone;
   final DateTime createdAt, updatedAt;
+  final DateTime? nextAttemptAt;
   Map<String, dynamic> toJson() => {
     'id': id,
     'entityType': entityType,
@@ -36,9 +47,17 @@ class SyncQueueItem {
     'hydrantId': hydrantId,
     'operation': operation,
     'dependencyIds': dependencyIds,
+    'idempotencyKey': idempotencyKey,
+    'payloadVersion': payloadVersion,
+    'revision': revision,
+    'baseRevision': baseRevision,
+    'tombstone': tombstone,
     'status': status.name,
     'attempts': attempts,
     'lastError': lastError,
+    'nextAttemptAt': nextAttemptAt?.toUtc().toIso8601String(),
+    'conflictStatus': conflictStatus,
+    'correlationId': correlationId,
     'createdAt': createdAt.toUtc().toIso8601String(),
     'updatedAt': updatedAt.toUtc().toIso8601String(),
     'schemaVersion': schemaVersion,
@@ -53,9 +72,20 @@ class SyncQueueItem {
     dependencyIds: (j['dependencyIds'] as List? ?? const [])
         .map((v) => '$v')
         .toList(),
+    idempotencyKey:
+        j['idempotencyKey'] as String? ?? '${j['entityType']}:${j['entityId']}',
+    payloadVersion: j['payloadVersion'] as int? ?? 1,
+    revision: j['revision'] as int? ?? 1,
+    baseRevision: j['baseRevision'] as int? ?? 0,
+    tombstone: j['tombstone'] as bool? ?? false,
     status: _status(j['status']),
     attempts: j['attempts'] as int? ?? 0,
     lastError: j['lastError'] as String?,
+    nextAttemptAt: DateTime.tryParse(
+      j['nextAttemptAt'] as String? ?? '',
+    )?.toUtc(),
+    conflictStatus: j['conflictStatus'] as String? ?? 'none',
+    correlationId: j['correlationId'] as String? ?? '',
     createdAt:
         DateTime.tryParse(j['createdAt'] as String? ?? '')?.toUtc() ??
         DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
