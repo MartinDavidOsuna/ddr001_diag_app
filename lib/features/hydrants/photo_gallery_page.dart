@@ -21,6 +21,10 @@ class _PhotoGalleryPageState extends State<PhotoGalleryPage> {
   String report = 'Todos';
   int visibleLimit = 100;
   List<InspectionPhoto> _all = const [];
+  final ScrollController _gridController = ScrollController();
+  int loadMilliseconds = 0;
+  int imageErrors = 0;
+  double restoredOffset = 0;
 
   @override
   void initState() {
@@ -31,14 +35,23 @@ class _PhotoGalleryPageState extends State<PhotoGalleryPage> {
         final value = Map<String, dynamic>.from(jsonDecode(saved) as Map);
         category = value['category'] as String? ?? category;
         report = value['report'] as String? ?? report;
+        restoredOffset = (value['scrollOffset'] as num?)?.toDouble() ?? 0;
       } on Object {
         // Invalid UI preference is safely ignored.
       }
     }
     _loadPhotos();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _gridController.hasClients && restoredOffset > 0) {
+        _gridController.jumpTo(
+          restoredOffset.clamp(0, _gridController.position.maxScrollExtent),
+        );
+      }
+    });
   }
 
   void _loadPhotos() {
+    final stopwatch = Stopwatch()..start();
     final values = <InspectionPhoto>[];
     for (final raw in Hive.box<String>('inspection_photos_v1').values) {
       try {
@@ -54,34 +67,48 @@ class _PhotoGalleryPageState extends State<PhotoGalleryPage> {
     }
     values.sort((a, b) => b.capturedAt.compareTo(a.capturedAt));
     _all = values;
+    stopwatch.stop();
+    loadMilliseconds = stopwatch.elapsedMilliseconds;
   }
 
-  Future<void> _saveFilters() => Hive.box<String>(
-    'gallery_ui_state_v1',
-  ).put(widget.hydrantId, jsonEncode({'category': category, 'report': report}));
+  Future<void> _saveFilters() => Hive.box<String>('gallery_ui_state_v1').put(
+    widget.hydrantId,
+    jsonEncode({
+      'category': category,
+      'report': report,
+      'scrollOffset': _gridController.hasClients
+          ? _gridController.offset
+          : restoredOffset,
+    }),
+  );
 
-  List<InspectionPhoto> get photos {
-    final result = _all
-        .where(
-          (photo) => photo.hydrantId == widget.hydrantId && !photo.isDeleted,
-        )
-        .where(
-          (photo) =>
-              report == 'Todos' ||
-              (report == ReportTypeLabels.visualShort &&
-                  photo.inspectionType == 'f02A') ||
-              (report == ReportTypeLabels.functionalShort &&
-                  photo.inspectionType == 'f02B'),
-        )
-        .where((photo) => category == 'Todas' || photo.category == category)
-        .take(visibleLimit)
-        .toList();
-    return result;
+  @override
+  void dispose() {
+    _saveFilters();
+    _gridController.dispose();
+    super.dispose();
   }
+
+  List<InspectionPhoto> get filteredPhotos => _all
+      .where((photo) => photo.hydrantId == widget.hydrantId && !photo.isDeleted)
+      .where(
+        (photo) =>
+            report == 'Todos' ||
+            (report == ReportTypeLabels.visualShort &&
+                photo.inspectionType == 'f02A') ||
+            (report == ReportTypeLabels.functionalShort &&
+                photo.inspectionType == 'f02B'),
+      )
+      .where((photo) => category == 'Todas' || photo.category == category)
+      .toList();
+
+  List<InspectionPhoto> get photos =>
+      filteredPhotos.take(visibleLimit).toList();
 
   @override
   Widget build(BuildContext context) {
     final items = photos;
+    final filteredCount = filteredPhotos.length;
     return Scaffold(
       appBar: const AppPageHeader(
         title: 'Galería local',
@@ -131,6 +158,7 @@ class _PhotoGalleryPageState extends State<PhotoGalleryPage> {
                         'montaje general',
                         'banco de pruebas',
                         'instrumentos',
+                        'certificado de instrumento',
                         'manómetros',
                         'caudalímetro patrón',
                         'conexión',
@@ -175,6 +203,7 @@ class _PhotoGalleryPageState extends State<PhotoGalleryPage> {
                     child: Text('No hay fotografías para este filtro.'),
                   )
                 : GridView.builder(
+                    controller: _gridController,
                     padding: const EdgeInsets.all(12),
                     gridDelegate:
                         const SliverGridDelegateWithFixedCrossAxisCount(
@@ -183,7 +212,7 @@ class _PhotoGalleryPageState extends State<PhotoGalleryPage> {
                           crossAxisSpacing: 10,
                         ),
                     itemCount:
-                        items.length + (items.length == visibleLimit ? 1 : 0),
+                        items.length + (items.length < filteredCount ? 1 : 0),
                     itemBuilder: (_, index) => index == items.length
                         ? Center(
                             child: OutlinedButton(
@@ -192,8 +221,23 @@ class _PhotoGalleryPageState extends State<PhotoGalleryPage> {
                               child: const Text('Cargar más'),
                             ),
                           )
-                        : _PhotoTile(photo: items[index]),
+                        : _PhotoTile(
+                            photo: items[index],
+                            onImageError: () {
+                              if (mounted) setState(() => imageErrors++);
+                            },
+                          ),
                   ),
+          ),
+          Semantics(
+            label: 'Métricas de carga de galería',
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Text(
+                'Cargadas ${items.length}/$filteredCount · lote máximo 100 · $loadMilliseconds ms · errores de imagen $imageErrors',
+                style: const TextStyle(fontSize: 11, color: AppColors.muted),
+              ),
+            ),
           ),
         ],
       ),
@@ -202,8 +246,9 @@ class _PhotoGalleryPageState extends State<PhotoGalleryPage> {
 }
 
 class _PhotoTile extends StatelessWidget {
-  const _PhotoTile({required this.photo});
+  const _PhotoTile({required this.photo, required this.onImageError});
   final InspectionPhoto photo;
+  final VoidCallback onImageError;
   @override
   Widget build(BuildContext context) {
     final file = File(photo.thumbnailPath);
@@ -218,7 +263,23 @@ class _PhotoTile extends StatelessWidget {
           children: [
             Expanded(
               child: file.existsSync()
-                  ? Image.file(file, fit: BoxFit.cover)
+                  ? Image.file(
+                      file,
+                      fit: BoxFit.cover,
+                      cacheWidth: 400,
+                      errorBuilder: (_, _, _) {
+                        WidgetsBinding.instance.addPostFrameCallback(
+                          (_) => onImageError(),
+                        );
+                        return const ColoredBox(
+                          color: AppColors.border,
+                          child: Icon(
+                            Icons.broken_image_outlined,
+                            color: AppColors.red,
+                          ),
+                        );
+                      },
+                    )
                   : const ColoredBox(
                       color: AppColors.border,
                       child: Icon(

@@ -2,6 +2,8 @@
 
 Estado inicial de todos los casos: No ejecutado. Evidencia: captura, video, traza y exportación JSON cuando aplique.
 
+La cobertura automatizada previa a API y sus límites P0/P1/P2 se documentan en `docs/stage4_automated_test_coverage.md`. Los casos de hardware, rendimiento y plataforma siguen requiriendo esta matriz aunque exista una prueba de contrato Dart.
+
 | ID | Caso | Precondición y pasos | Resultado esperado | Severidad |
 |---|---|---|---|---|
 | RV1-01 | Correspondencia | Elegir Sí/No/No se puede confirmar; cerrar/reabrir | Selección persistida y trazada | S1 |
@@ -112,3 +114,46 @@ Estado inicial: No ejecutado. Dispositivo, fecha, ejecutor y observaciones deben
 | 4C-W06 | Conexión desconocida | Conexión No verificado | Continuar | Dependientes ocultas; no bloquean | S1 | No ejecutado | Video | Pendiente | Pendiente | Pendiente | |
 | 4C-W07 | Persistencia | Cualquier rama | Cerrar/reabrir | Rama y normalización restauradas | S1 | No ejecutado | Video+JSON | Pendiente | Pendiente | Pendiente | |
 | 4C-W08 | Privacidad | Abrir paso 6 | Observar permisos/tráfico | Sin escaneo Wi-Fi ni permisos adicionales | S1 | No ejecutado | Manifest+log | Pendiente | Pendiente | Pendiente | |
+
+## Casos Etapa 4C — editores, recuperación y certificación
+
+| ID | Módulo | Precondición | Pasos | Resultado esperado | Sev. | Estado | Evidencia | Dispositivo | Fecha | Ejecutor | Observaciones |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 4C-E01 | Válvulas | RF editable | Crear 3 válvulas | UUID distintos; etiquetas no son identidad | S1 | No ejecutado | JSON+video | Pendiente | Pendiente | Pendiente | |
+| 4C-E02 | Válvulas | RF editable | Crear 5, abrir detalle y editar | Selector/lista operable sin formulario largo | S1 | No ejecutado | Video | Pendiente | Pendiente | Pendiente | |
+| 4C-E03 | Válvulas | Una configurada | Duplicar | Copia configuración; no pruebas/fotos/resultados | S1 | No ejecutado | JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-E04 | Válvulas | Cinco válvulas | Reordenar | Orden/etiqueta cambian; UUID permanece | S1 | No ejecutado | JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-E05 | Válvulas | Válvula activa | Retirar/restaurar | Borrado lógico; historial conservado | S1 | No ejecutado | JSON+traza | Pendiente | Pendiente | Pendiente | |
+| 4C-E06 | Prueba válvula | Válvula activa | Crear/editar/repetir 3 intentos | No sobrescribe; secuencia y UUID propios | S1 | No ejecutado | JSON+video | Pendiente | Pendiente | Pendiente | |
+| 4C-E07 | Prueba válvula | Varios intentos | Aceptar otro/invalidar con motivo | Una válida; historial íntegro | S1 | No ejecutado | JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-E08 | Corridas | Mismo conditionKey | Crear 3 corridas | UUID y campos completos | S1 | No ejecutado | JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-E09 | Corridas | Dos válidas | Aceptar nueva/retirar aceptación | Anterior se desactiva sin borrado | S1 | No ejecutado | JSON+traza | Pendiente | Pendiente | Pendiente | |
+| 4C-E10 | Corridas | Corrida válida | Repetir/invalidar | Registro nuevo; motivo obligatorio | S1 | No ejecutado | JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-E11 | Comparación | Varias corridas | Abrir comparador | Muestra rango, presiones, caudal, estabilidad, ajuste, resultado, aceptación y fecha | S2 | No ejecutado | Captura | Pendiente | Pendiente | Pendiente | |
+| 4C-E12 | Alarmas | RF editable | Crear varios tipos | Lista por tipo/intento y UUID | S1 | No ejecutado | JSON+video | Pendiente | Pendiente | Pendiente | |
+| 4C-E13 | Alarmas | Tipo Otra | Guardar sin/con descripción | Sin descripción bloquea | S1 | No ejecutado | Video | Pendiente | Pendiente | Pendiente | |
+| 4C-E14 | Alarmas | Intento existente | Repetir/invalidar | No sobrescribe; motivo persistido | S1 | No ejecutado | JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-E15 | Alarmas | Timestamps disponibles | Generar/reportar | Latencia calculada o No calculable | S1 | No ejecutado | JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-E16 | Instrumentos | RF editable | Crear/editar texto libre | Marca/modelo/serie sin catálogos | S1 | No ejecutado | Video+JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-E17 | Instrumentos | Instrumento activo | Retirar/restaurar/no apto | Estado lógico y traza correctos | S1 | No ejecutado | JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-E18 | Instrumentos | Serie activa | Retirar o no apto | Operación bloqueada | S1 | No ejecutado | Video | Pendiente | Pendiente | Pendiente | |
+| 4C-E19 | Instrumentos | Instrumento usado | Editar inventario | Snapshot histórico no cambia | S1 | No ejecutado | Diff JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-E20 | Instrumentos | Instrumento activo | Foto/certificado/historial | Asociación y series relacionadas visibles | S2 | No ejecutado | Video+JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-R01 | Revisiones | Cadena lineal | Resolver RV y RF | Original/cadena/activa correctos | S1 | No ejecutado | Export JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-R02 | Revisiones | Cadena bifurcada | Resolver | Ambigua; IntegrityIssue; no elección silenciosa | S1 | No ejecutado | Audit JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-R03 | Revisiones | Referencia circular | Resolver | Ciclo detectado; documentos conservados | S1 | No ejecutado | Audit JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-R04 | Revisiones | previous faltante | Resolver | Referencia inválida y revisión manual | S1 | No ejecutado | Audit JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-J01 | Journal | Cada operationType | Dejar prepared | Compensa vacío o marca ambigüedad | S1 | No ejecutado | Journal | Pendiente | Pendiente | Pendiente | |
+| 4C-J02 | Journal | Cada operationType | Interrumpir documents/indexes/files/queue | Solo converge si es inequívoco | S1 | No ejecutado | Journal | Pendiente | Pendiente | Pendiente | |
+| 4C-J03 | Journal | needsRecovery/failed/quarantined | Ejecutar recovery | Sin inventar ni borrar evidencia | S1 | No ejecutado | Journal+audit | Pendiente | Pendiente | Pendiente | |
+| 4C-M01 | Miniatura | Original válido, thumb faltante | Reconciliar | Temporal→rename, documento/journal/traza | S1 | No ejecutado | Archivos+JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-M02 | Miniatura | Original corrupto | Reconciliar | Corrupto reportado; original intacto | S1 | No ejecutado | Hash+audit | Pendiente | Pendiente | Pendiente | |
+| 4C-M03 | Huérfanos | Original/thumb/tmp sin documento | Auditar | Detectados; sin borrado automático | S1 | No ejecutado | Export | Pendiente | Pendiente | Pendiente | |
+| 4C-A01 | Auditoría | Inspector normal | Abrir URL | Acceso restringido | S1 | No ejecutado | Video | Pendiente | Pendiente | Pendiente | |
+| 4C-A02 | Auditoría | Supervisor/admin demo | Ejecutar/reparar | Resumen, severidades y reparación segura | S1 | No ejecutado | Video+JSON | Pendiente | Pendiente | Pendiente | |
+| 4C-A03 | Exportación | Auditoría ejecutada | Exportar JSON/texto | Contenido controlado y copiable | S2 | No ejecutado | Archivos | Pendiente | Pendiente | Pendiente | |
+| 4C-GAL01 | Galería | 100 fotos | Abrir/filtrar/visor/volver | Lote, filtro y posición conservados | S2 | No ejecutado | Perfil+video | Pendiente | Pendiente | Pendiente | |
+| 4C-GAL02 | Galería | 500 fotos | Cargar por lotes | Máximo 100 por incremento; miniaturas | S2 | No ejecutado | Perfil | Pendiente | Pendiente | Pendiente | |
+| 4C-GAL03 | Galería | 1000 fotos | Rotar/visor/cerrar | Sin originales en build; medir, no certificar previamente | S2 | No ejecutado | Perfil+memoria | Pendiente | Pendiente | Pendiente | |
+| 4C-UX01 | Accesibilidad | Texto 2×/pantalla pequeña | Recorrer editores | Sin overflow; acciones legibles | S2 | No ejecutado | Capturas | Pendiente | Pendiente | Pendiente | |
+| 4C-UX02 | Recuperación | Editor/foto activa | Cierre forzado/reabrir | Datos confirmados conservados; operación recuperable | S1 | No ejecutado | Video+journal | Pendiente | Pendiente | Pendiente | |

@@ -67,7 +67,7 @@ Future<AppState> bootstrap() async {
     recovery.audit.id,
     jsonEncode(recovery.audit.toJson()),
   );
-  await const MediaReconciliationService().reconcile();
+  await MediaReconciliationService().reconcile();
   final preferences = await SharedPreferences.getInstance();
   final packageInfo = await PackageInfo.fromPlatform();
   final state = AppState(

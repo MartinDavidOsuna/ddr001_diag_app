@@ -9,15 +9,24 @@ import 'cellular_probe_configuration.dart';
 typedef CellularProbeProgressCallback = void Function(String stage);
 
 class CellularInternetProbeChannel {
-  CellularInternetProbeChannel._() {
+  CellularInternetProbeChannel({
+    MethodChannel? channel,
+    bool Function()? isAndroid,
+    String Function()? platformName,
+  }) : _channel = channel ?? const MethodChannel(_channelName),
+       _isAndroid = isAndroid ?? (() => Platform.isAndroid),
+       _platformName = platformName ?? (() => Platform.operatingSystem) {
     _channel.setMethodCallHandler(_handleNativeCall);
   }
 
   static final CellularInternetProbeChannel instance =
-      CellularInternetProbeChannel._();
-  static const _channel = MethodChannel(
-    'com.aquafim.ddr001diag/cellular_internet_probe',
-  );
+      CellularInternetProbeChannel();
+  static const _channelName =
+      'com.aquafim.ddr001diag/cellular_internet_probe';
+
+  final MethodChannel _channel;
+  final bool Function() _isAndroid;
+  final String Function() _platformName;
 
   final Map<String, CellularProbeProgressCallback> _progressCallbacks = {};
 
@@ -26,10 +35,10 @@ class CellularInternetProbeChannel {
     required CellularProbeConfiguration configuration,
     CellularProbeProgressCallback? onProgress,
   }) async {
-    if (!Platform.isAndroid) {
+    if (!_isAndroid()) {
       return CellularInternetProbeResult.platformRestricted(
         methodVersion: configuration.methodVersion,
-        platform: Platform.operatingSystem,
+        platform: _platformName(),
       );
     }
     if (onProgress != null) _progressCallbacks[probeId] = onProgress;
@@ -53,7 +62,7 @@ class CellularInternetProbeChannel {
 
   Future<void> cancel(String probeId) async {
     _progressCallbacks.remove(probeId);
-    if (!Platform.isAndroid) return;
+    if (!_isAndroid()) return;
     try {
       await _channel.invokeMethod<void>('cancelProbe', {'probeId': probeId});
     } on PlatformException {

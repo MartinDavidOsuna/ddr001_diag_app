@@ -4,6 +4,12 @@ Todos los cambios notables de **DIAGNOSTICO HIDRANTES** se documentan aquí.
 
 ## Unreleased — Etapa 3
 
+- Etapa 4D incorpora infraestructura de pruebas unitarias, dominio, serialización, Hive, recuperación, medios, widgets, MethodChannel e integración offline previa a DDR001 API.
+- Se agregan fixtures, fakes, entorno Hive temporal, matriz P0/P1/P2 y guía reproducible de ejecución; las suites quedan pendientes de ejecución manual por restricción de esta intervención.
+- El adaptador celular admite inyección controlada del canal y plataforma para probar el contrato sin alterar la implementación Android ni realizar conexiones reales.
+- Etapa 4C completa editores UUID para válvulas/pruebas, corridas, alarmas e instrumentos con historial, invalidación y evidencia.
+- Se agrega resolución verificable de revisiones RV/RF, recuperación por fases, regeneración de miniaturas y detección segura de huérfanos.
+- Perfil incorpora auditoría técnica restringida con reparaciones conservadoras y exportación; galería añade métricas y posición persistida.
 - Etapa 4C liga una prueba HTTPS mínima a un `Network` celular Android y separa capacidades INTERNET/VALIDATED del resultado HTTP.
 - La evaluación Wi-Fi permanece manual y ahora aplica ramas condicionales con normalización persistida y validación central.
 - Etapa 4B agrega máquina de estados común, inmutabilidad y revisiones para RV/RF.

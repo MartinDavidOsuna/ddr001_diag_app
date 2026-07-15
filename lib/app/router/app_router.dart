@@ -12,6 +12,7 @@ import '../../features/map/map_page.dart';
 import '../../features/profile/profile_pages.dart';
 import '../../features/shell/main_shell.dart';
 import '../../features/sync/sync_page.dart';
+import '../../features/diagnostics/local_integrity_page.dart';
 import 'branch_root_pop_scope.dart';
 import 'navigation_keys.dart';
 
@@ -117,6 +118,10 @@ GoRouter createRouter(AppState state) => GoRouter(
               routes: [
                 GoRoute(path: 'manual', builder: (_, _) => const ManualPage()),
                 GoRoute(path: 'update', builder: (_, _) => const UpdatePage()),
+                GoRoute(
+                  path: 'integrity',
+                  builder: (_, _) => const LocalIntegrityPage(),
+                ),
               ],
             ),
           ],

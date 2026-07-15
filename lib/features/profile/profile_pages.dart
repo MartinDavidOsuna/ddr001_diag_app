@@ -146,6 +146,14 @@ class ProfilePage extends StatelessWidget {
                     context.push('/profile/update');
                   },
                 ),
+                if (state.user.role.toLowerCase().contains('supervisor') ||
+                    state.user.role.toLowerCase().contains('admin'))
+                  _Menu(
+                    icon: Icons.health_and_safety_outlined,
+                    title: 'Auditoría técnica local',
+                    subtitle: 'Integridad, recuperación y cuarentena',
+                    onTap: () => context.push('/profile/integrity'),
+                  ),
               ],
             ),
           ),

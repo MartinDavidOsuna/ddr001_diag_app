@@ -9,6 +9,7 @@ import '../../domain/integrity/integrity_models.dart';
 import '../../domain/integrity/operation_journal.dart';
 import '../../domain/media/inspection_photo.dart';
 import '../../domain/functional/functional_models.dart';
+import 'report_revision_resolver_service.dart';
 
 class IntegrityAuditService {
   const IntegrityAuditService();
@@ -33,6 +34,7 @@ class IntegrityAuditService {
     _auditResults(issues);
     _auditPhotos(issues);
     _auditJournals(issues);
+    _auditRevisions(issues);
     return IntegrityAuditReport(
       id: const Uuid().v4(),
       startedAt: started,
@@ -257,6 +259,22 @@ class IntegrityAuditService {
             ),
           );
         }
+        if (!photo.isDeleted &&
+            (photo.thumbnailPath.isEmpty ||
+                !File(photo.thumbnailPath).existsSync())) {
+          issues.add(
+            _issue(
+              IntegrityIssueType.missingThumbnail,
+              IntegritySeverity.warning,
+              'photo',
+              photo.id,
+              'Miniatura pendiente de recuperación.',
+              'No existe ${photo.thumbnailPath}.',
+              RecoveryAction.regenerateThumbnail,
+              automatic: File(photo.localPath).existsSync(),
+            ),
+          );
+        }
         if (!photo.isDeleted && !queue.containsKey(photo.id)) {
           issues.add(
             _issue(
@@ -301,6 +319,34 @@ class IntegrityAuditService {
         }
       } on Object {
         // Already reported as corrupt JSON.
+      }
+    }
+  }
+
+  void _auditRevisions(List<IntegrityIssue> issues) {
+    const service = ReportRevisionResolverService();
+    for (final reportType in const ['f02A', 'f02B']) {
+      final boxName = reportType == 'f02A'
+          ? 'visual_inspections_v1'
+          : 'functional_inspections_v1';
+      final hydrants = <String>{};
+      for (final raw in Hive.box<String>(boxName).values) {
+        try {
+          final payload = VersionedJsonCodec.decode(raw).payload;
+          final hydrantId = payload['hydrantId'] as String?;
+          if (hydrantId != null && hydrantId.isNotEmpty) {
+            hydrants.add(hydrantId);
+          }
+        } on Object {
+          // La auditoría JSON ya registra el documento ilegible.
+        }
+      }
+      for (final hydrantId in hydrants) {
+        issues.addAll(
+          service
+              .resolveForHydrant(hydrantId: hydrantId, reportType: reportType)
+              .issues,
+        );
       }
     }
   }

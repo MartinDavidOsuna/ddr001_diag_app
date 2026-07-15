@@ -5,6 +5,7 @@ import 'package:hive_ce/hive.dart';
 
 import '../../domain/media/inspection_photo.dart';
 import '../../domain/media/media_sync_status.dart';
+import 'thumbnail_regeneration_service.dart';
 
 enum MediaReconciliationIssue {
   missingOriginal,
@@ -26,7 +27,14 @@ class MediaReconciliationResult {
 }
 
 class MediaReconciliationService {
-  const MediaReconciliationService();
+  MediaReconciliationService({
+    ThumbnailRegenerationService? thumbnailRegeneration,
+    this.regenerateMissingThumbnails = false,
+  }) : thumbnailRegeneration =
+           thumbnailRegeneration ?? ThumbnailRegenerationService();
+
+  final ThumbnailRegenerationService thumbnailRegeneration;
+  final bool regenerateMissingThumbnails;
 
   Future<List<MediaReconciliationResult>> reconcile() async {
     final photos = Hive.box<String>('inspection_photos_v1');
@@ -51,9 +59,20 @@ class MediaReconciliationService {
         if (photo.thumbnailPath.isEmpty ||
             !File(photo.thumbnailPath).existsSync()) {
           issues.add(MediaReconciliationIssue.missingThumbnail);
-          actions.add(
-            'Miniatura pendiente de regeneración desde original válido.',
-          );
+          if (exists && regenerateMissingThumbnails) {
+            final regeneration = await thumbnailRegeneration.regenerate(photo);
+            actions.add(
+              regeneration.success
+                  ? 'Miniatura regenerada y documento actualizado.'
+                  : 'Miniatura no regenerada: ${regeneration.errorCode}.',
+            );
+          } else {
+            actions.add(
+              exists
+                  ? 'Miniatura pendiente de reparación segura.'
+                  : 'Miniatura no regenerable: falta el original.',
+            );
+          }
         }
         if (!work.containsKey(photo.id)) {
           issues.add(MediaReconciliationIssue.missingQueue);

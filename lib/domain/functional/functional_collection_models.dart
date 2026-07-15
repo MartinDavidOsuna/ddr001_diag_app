@@ -11,6 +11,7 @@ class ValveRecord {
     this.testIds = const [],
     this.photoIds = const [],
     this.seriesIds = const [],
+    this.instrumentIds = const [],
     this.result = '',
     this.retiredAt,
     required this.createdAt,
@@ -20,7 +21,7 @@ class ValveRecord {
   final String id, inspectionId, label, type, diameter, initialPosition, result;
   final int order, schemaVersion;
   final Map<String, dynamic> configuration;
-  final List<String> testIds, photoIds, seriesIds;
+  final List<String> testIds, photoIds, seriesIds, instrumentIds;
   final DateTime createdAt, updatedAt;
   final DateTime? retiredAt;
   bool get active => retiredAt == null;
@@ -36,6 +37,7 @@ class ValveRecord {
     'testIds': testIds,
     'photoIds': photoIds,
     'seriesIds': seriesIds,
+    'instrumentIds': instrumentIds,
     'result': result,
     'retiredAt': retiredAt?.toUtc().toIso8601String(),
     'createdAt': createdAt.toUtc().toIso8601String(),
@@ -56,6 +58,7 @@ class ValveRecord {
     testIds: _strings(json['testIds']),
     photoIds: _strings(json['photoIds']),
     seriesIds: _strings(json['seriesIds']),
+    instrumentIds: _strings(json['instrumentIds']),
     result: json['result'] as String? ?? '',
     retiredAt: _nullableDate(json['retiredAt']),
     createdAt: _date(json['createdAt']),
@@ -172,6 +175,7 @@ class AlarmAttemptRecord {
     this.generatedAt,
     this.detectedAt,
     this.reportedAt,
+    this.acknowledgedAt,
     this.latencyMs,
     this.acknowledged = false,
     this.result = '',
@@ -181,6 +185,7 @@ class AlarmAttemptRecord {
     this.invalidatedBy,
     this.invalidationReason,
     required this.createdAt,
+    this.updatedAt,
     this.schemaVersion = 1,
   });
   final String id, inspectionId, alarmType, otherDescription, result, comments;
@@ -188,7 +193,8 @@ class AlarmAttemptRecord {
   final int attemptNumber, schemaVersion;
   final bool generated, detectedLocally, reported, acknowledged;
   final int? latencyMs;
-  final DateTime? generatedAt, detectedAt, reportedAt, invalidatedAt;
+  final DateTime? generatedAt, detectedAt, reportedAt, acknowledgedAt;
+  final DateTime? invalidatedAt, updatedAt;
   final DateTime createdAt;
   final List<String> photoIds;
   bool get valid => invalidatedAt == null;
@@ -204,6 +210,7 @@ class AlarmAttemptRecord {
     'generatedAt': generatedAt?.toUtc().toIso8601String(),
     'detectedAt': detectedAt?.toUtc().toIso8601String(),
     'reportedAt': reportedAt?.toUtc().toIso8601String(),
+    'acknowledgedAt': acknowledgedAt?.toUtc().toIso8601String(),
     'latencyMs': latencyMs,
     'acknowledged': acknowledged,
     'result': result,
@@ -213,6 +220,7 @@ class AlarmAttemptRecord {
     'invalidatedBy': invalidatedBy,
     'invalidationReason': invalidationReason,
     'createdAt': createdAt.toUtc().toIso8601String(),
+    'updatedAt': updatedAt?.toUtc().toIso8601String(),
     'schemaVersion': schemaVersion,
   };
   factory AlarmAttemptRecord.fromJson(Map<String, dynamic> json) =>
@@ -228,6 +236,7 @@ class AlarmAttemptRecord {
         generatedAt: _nullableDate(json['generatedAt']),
         detectedAt: _nullableDate(json['detectedAt']),
         reportedAt: _nullableDate(json['reportedAt']),
+        acknowledgedAt: _nullableDate(json['acknowledgedAt']),
         latencyMs: json['latencyMs'] as int?,
         acknowledged: json['acknowledged'] as bool? ?? false,
         result: json['result'] as String? ?? '',
@@ -237,6 +246,7 @@ class AlarmAttemptRecord {
         invalidatedBy: json['invalidatedBy'] as String?,
         invalidationReason: json['invalidationReason'] as String?,
         createdAt: _date(json['createdAt']),
+        updatedAt: _nullableDate(json['updatedAt']),
         schemaVersion: json['schemaVersion'] as int? ?? 1,
       );
 }

@@ -279,29 +279,48 @@ class InstrumentRecord {
   final List<String> photoIds;
   final int schemaVersion;
   InstrumentRecord copyWith({
+    String? type,
+    String? assetCode,
+    String? brandText,
+    String? modelText,
+    String? serialNumber,
+    InstrumentIdentificationStatus? identificationStatus,
+    String? measurementRange,
+    String? unit,
+    String? accuracyClass,
+    DateTime? calibrationDate,
+    DateTime? calibrationDueDate,
+    String? calibrationCertificate,
+    CalibrationStatus? calibrationStatus,
+    String? condition,
+    String? operatorId,
+    String? comments,
+    List<String>? photoIds,
     DateTime? deletedAt,
+    bool restore = false,
     InstrumentLifecycleStatus? lifecycleStatus,
   }) => InstrumentRecord(
     id: id,
     inspectionId: inspectionId,
-    type: type,
-    assetCode: assetCode,
-    brandText: brandText,
-    modelText: modelText,
-    serialNumber: serialNumber,
-    identificationStatus: identificationStatus,
-    measurementRange: measurementRange,
-    unit: unit,
-    accuracyClass: accuracyClass,
-    calibrationDate: calibrationDate,
-    calibrationDueDate: calibrationDueDate,
-    calibrationCertificate: calibrationCertificate,
-    calibrationStatus: calibrationStatus,
-    condition: condition,
-    operatorId: operatorId,
-    comments: comments,
-    photoIds: photoIds,
-    deletedAt: deletedAt ?? this.deletedAt,
+    type: type ?? this.type,
+    assetCode: assetCode ?? this.assetCode,
+    brandText: brandText ?? this.brandText,
+    modelText: modelText ?? this.modelText,
+    serialNumber: serialNumber ?? this.serialNumber,
+    identificationStatus: identificationStatus ?? this.identificationStatus,
+    measurementRange: measurementRange ?? this.measurementRange,
+    unit: unit ?? this.unit,
+    accuracyClass: accuracyClass ?? this.accuracyClass,
+    calibrationDate: calibrationDate ?? this.calibrationDate,
+    calibrationDueDate: calibrationDueDate ?? this.calibrationDueDate,
+    calibrationCertificate:
+        calibrationCertificate ?? this.calibrationCertificate,
+    calibrationStatus: calibrationStatus ?? this.calibrationStatus,
+    condition: condition ?? this.condition,
+    operatorId: operatorId ?? this.operatorId,
+    comments: comments ?? this.comments,
+    photoIds: photoIds ?? this.photoIds,
+    deletedAt: restore ? null : deletedAt ?? this.deletedAt,
     lifecycleStatus: lifecycleStatus ?? this.lifecycleStatus,
     schemaVersion: schemaVersion,
   );
@@ -685,6 +704,14 @@ class FunctionalValveTest extends FunctionalTestRecord {
     this.leakageLevel = '',
     this.pressureBehavior = '',
     this.photoIds = const [],
+    this.instrumentIds = const [],
+    this.measurementSeriesIds = const [],
+    this.accepted = false,
+    this.invalidatedAt,
+    this.invalidatedBy,
+    this.invalidationReason,
+    this.createdAt,
+    this.updatedAt,
     super.result = '',
     super.comments = '',
     super.schemaVersion = 1,
@@ -700,7 +727,11 @@ class FunctionalValveTest extends FunctionalTestRecord {
       pressureBehavior;
   final int testSequence, numberOfCycles;
   final bool blockage, noise, vibration;
-  final List<String> photoIds;
+  final bool accepted;
+  final List<String> photoIds, instrumentIds, measurementSeriesIds;
+  final DateTime? invalidatedAt, createdAt, updatedAt;
+  final String? invalidatedBy, invalidationReason;
+  bool get valid => invalidatedAt == null;
   @override
   Map<String, dynamic> fields() => {
     'type': 'valve',
@@ -719,6 +750,14 @@ class FunctionalValveTest extends FunctionalTestRecord {
     'leakageLevel': leakageLevel,
     'pressureBehavior': pressureBehavior,
     'photoIds': photoIds,
+    'instrumentIds': instrumentIds,
+    'measurementSeriesIds': measurementSeriesIds,
+    'accepted': accepted,
+    'invalidatedAt': _nullableDateToJson(invalidatedAt),
+    'invalidatedBy': invalidatedBy,
+    'invalidationReason': invalidationReason,
+    'createdAt': _nullableDateToJson(createdAt),
+    'updatedAt': _nullableDateToJson(updatedAt),
   };
   factory FunctionalValveTest.fromJson(Map<String, dynamic> j) =>
       FunctionalValveTest(
@@ -739,6 +778,14 @@ class FunctionalValveTest extends FunctionalTestRecord {
         leakageLevel: j['leakageLevel'] as String? ?? '',
         pressureBehavior: j['pressureBehavior'] as String? ?? '',
         photoIds: _strings(j['photoIds']),
+        instrumentIds: _strings(j['instrumentIds']),
+        measurementSeriesIds: _strings(j['measurementSeriesIds']),
+        accepted: j['accepted'] as bool? ?? false,
+        invalidatedAt: _nullableDate(j['invalidatedAt']),
+        invalidatedBy: j['invalidatedBy'] as String?,
+        invalidationReason: j['invalidationReason'] as String?,
+        createdAt: _nullableDate(j['createdAt']),
+        updatedAt: _nullableDate(j['updatedAt']),
         result: j['result'] as String? ?? '',
         comments: j['comments'] as String? ?? '',
         schemaVersion: j['schemaVersion'] as int? ?? 1,

@@ -25,6 +25,10 @@ import '../../domain/media/inspection_photo.dart';
 import '../../domain/workflow/report_state_machine.dart';
 import '../shared/section_photo_counter.dart';
 import 'calculation/functional_result_engine.dart';
+import 'widgets/alarm_attempt_editor.dart';
+import 'widgets/instrument_editor.dart';
+import 'widgets/reducer_run_editor.dart';
+import 'widgets/valve_editor.dart';
 
 class FunctionalInspectionPage extends StatefulWidget {
   const FunctionalInspectionPage({required this.hydrantId, super.key});
@@ -57,6 +61,12 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
   List<ValveRecord> valveRecords = [];
   List<ReducerRun> reducerRuns = [];
   List<AlarmAttemptRecord> alarmAttempts = [];
+  String? selectedValveId;
+
+  List<FunctionalValveTest> get valveTests => _decodeCollection(
+    'functional_valve_tests_v1',
+    FunctionalValveTest.fromJson,
+  ).where((value) => value.inspectionId == inspection?.id).toList();
 
   @override
   void initState() {
@@ -90,7 +100,9 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
       );
       final completed = history
           .where(
-            (value) => value.status == FunctionalInspectionStatus.completed,
+            (value) =>
+                value.status == FunctionalInspectionStatus.completed ||
+                value.status == FunctionalInspectionStatus.synced,
           )
           .firstOrNull;
       var value =
@@ -133,6 +145,13 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
             ValveRecord.fromJson,
           ).where((value) => value.inspectionId == inspectionId).toList()
           ..sort((a, b) => a.order.compareTo(b.order));
+    final activeValveIds = valveRecords
+        .where((value) => value.active)
+        .map((value) => value.id)
+        .toSet();
+    if (selectedValveId == null || !activeValveIds.contains(selectedValveId)) {
+      selectedValveId = activeValveIds.firstOrNull;
+    }
     reducerRuns =
         _decodeCollection(
             'reducer_runs_v1',
@@ -166,13 +185,40 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
     String boxName,
     String id,
     Map<String, dynamic> json,
-  ) => Hive.box<String>(boxName).put(
-    id,
-    VersionedJsonCodec.encode(
-      schemaVersion: json['schemaVersion'] as int? ?? 1,
-      payload: json,
-    ),
-  );
+  ) async {
+    final state = context.read<AppState>();
+    await Hive.box<String>(boxName).put(
+      id,
+      VersionedJsonCodec.encode(
+        schemaVersion: json['schemaVersion'] as int? ?? 1,
+        payload: json,
+      ),
+    );
+    final entityType = switch (boxName) {
+      'valve_records_v1' => 'valveRecord',
+      'functional_valve_tests_v1' => 'functionalValveTest',
+      'reducer_runs_v1' => 'reducerRun',
+      'alarm_attempts_v1' => 'alarmAttempt',
+      _ => 'functionalEntity',
+    };
+    await state.trace(
+      'functional_collection_saved',
+      'Registro técnico guardado',
+      hydrantId: widget.hydrantId,
+      inspectionId: inspection?.id,
+      entityType: entityType,
+      entityId: id,
+    );
+    if (inspection != null) {
+      await state.enqueueSync(
+        entityType: entityType,
+        entityId: id,
+        inspectionId: inspection!.id,
+        hydrantId: widget.hydrantId,
+        dependencyIds: ['functionalInspection:${inspection!.id}'],
+      );
+    }
+  }
 
   Future<FunctionalInspection> _inheritVisualContext(
     FunctionalInspection value,
@@ -1488,6 +1534,136 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
     }
   }
 
+  Future<void> _editInstrument(InstrumentRecord record) async {
+    if (readOnly) return;
+    final state = context.read<AppState>();
+    final updated = await InstrumentEditor.show(
+      context,
+      inspectionId: inspection!.id,
+      operatorId: state.user.id,
+      existing: record,
+    );
+    if (updated == null) return;
+    await Hive.box<String>('instrument_records_v1').put(
+      updated.id,
+      VersionedJsonCodec.encode(
+        schemaVersion: updated.schemaVersion,
+        payload: updated.toJson(),
+      ),
+    );
+    await state.trace(
+      'functional_instrument_updated',
+      'Instrumento actualizado',
+      hydrantId: inspection!.hydrantId,
+      inspectionId: inspection!.id,
+      entityType: 'instrument',
+      entityId: updated.id,
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _restoreInstrument(InstrumentRecord record) async {
+    if (readOnly) return;
+    final state = context.read<AppState>();
+    final restored = record.copyWith(
+      restore: true,
+      lifecycleStatus: InstrumentLifecycleStatus.active,
+    );
+    await Hive.box<String>('instrument_records_v1').put(
+      record.id,
+      VersionedJsonCodec.encode(
+        schemaVersion: restored.schemaVersion,
+        payload: restored.toJson(),
+      ),
+    );
+    await state.trace(
+      'functional_instrument_restored',
+      'Instrumento restaurado',
+      hydrantId: inspection!.hydrantId,
+      inspectionId: inspection!.id,
+      entityType: 'instrument',
+      entityId: record.id,
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _captureInstrumentPhoto(
+    InstrumentRecord record, {
+    required bool certificate,
+  }) async {
+    if (readOnly) return;
+    final state = context.read<AppState>();
+    final photo = await photoService.acquire(
+      pickerSource: ImageSource.camera,
+      hydrantId: widget.hydrantId,
+      inspectionId: inspection!.id,
+      inspectionType: 'f02B',
+      category: certificate ? 'certificado de instrumento' : 'instrumentos',
+      instrumentId: record.id,
+      userId: state.user.id,
+      userName: state.user.fullName,
+      brigadeId: state.user.brigadeId,
+      deviceId: state.user.deviceId,
+    );
+    if (photo == null) return;
+    final updated = record.copyWith(photoIds: [...record.photoIds, photo.id]);
+    await Hive.box<String>('instrument_records_v1').put(
+      record.id,
+      VersionedJsonCodec.encode(
+        schemaVersion: updated.schemaVersion,
+        payload: updated.toJson(),
+      ),
+    );
+    inspection = inspection!.copyWith(
+      photoIds: [...inspection!.photoIds, photo.id],
+    );
+    await _save();
+  }
+
+  Future<void> _showInstrumentHistory(InstrumentRecord record) {
+    final related = _series
+        .where((series) => series.instrumentId == record.id)
+        .toList();
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Historial del instrumento'),
+        content: SizedBox(
+          width: 480,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              Text('Estado: ${record.lifecycleStatus.name}'),
+              Text('Calibración: ${record.calibrationStatus.name}'),
+              Text(
+                'Certificado: ${record.calibrationCertificate.isEmpty ? 'No adjunto' : record.calibrationCertificate}',
+              ),
+              Text('Fotografías: ${record.photoIds.length}'),
+              const Divider(),
+              Text(
+                'Series relacionadas: ${related.length}',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              for (final series in related)
+                ListTile(
+                  title: Text(series.testType),
+                  subtitle: Text(
+                    '${series.readings.length} lecturas · ${series.result}',
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
   List<String> get _activeInstrumentIds =>
       inspection!.instrumentIds.where((id) {
         final instrument = _instrument(id);
@@ -2571,67 +2747,19 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
     ValveRecord? existing,
     bool duplicate = false,
   }) async {
-    final type = TextEditingController(text: existing?.type ?? '');
-    final diameter = TextEditingController(text: existing?.diameter ?? '');
-    final position = TextEditingController(
-      text: existing?.initialPosition ?? '',
+    if (readOnly) return;
+    final record = await ValveEditor.show(
+      context,
+      inspectionId: inspection!.id,
+      suggestedOrder:
+          valveRecords
+              .map((value) => value.order)
+              .fold(0, (a, b) => a > b ? a : b) +
+          1,
+      existing: existing,
+      duplicate: duplicate,
     );
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(
-          existing == null
-              ? 'Agregar válvula'
-              : duplicate
-              ? 'Duplicar válvula'
-              : 'Editar ${existing.label}',
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: type,
-              decoration: const InputDecoration(labelText: 'Tipo'),
-            ),
-            TextField(
-              controller: diameter,
-              decoration: const InputDecoration(labelText: 'Diámetro'),
-            ),
-            TextField(
-              controller: position,
-              decoration: const InputDecoration(labelText: 'Posición inicial'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Guardar'),
-          ),
-        ],
-      ),
-    );
-    if (accepted == true) {
-      final now = DateTime.now().toUtc();
-      final order = duplicate || existing == null
-          ? valveRecords.length + 1
-          : existing.order;
-      final record = ValveRecord(
-        id: duplicate || existing == null ? const Uuid().v4() : existing.id,
-        inspectionId: inspection!.id,
-        order: order,
-        label: 'V$order',
-        type: type.text.trim(),
-        diameter: diameter.text.trim(),
-        initialPosition: position.text.trim(),
-        configuration: existing?.configuration ?? const {},
-        createdAt: duplicate || existing == null ? now : existing.createdAt,
-        updatedAt: now,
-      );
+    if (record != null) {
       await _saveCollectionRecord(
         'valve_records_v1',
         record.id,
@@ -2640,12 +2768,10 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
       _loadFunctionalCollections(inspection!.id);
       if (mounted) setState(() {});
     }
-    type.dispose();
-    diameter.dispose();
-    position.dispose();
   }
 
   Future<void> _retireValve(ValveRecord record) async {
+    if (readOnly) return;
     final json = record.toJson()
       ..['retiredAt'] = DateTime.now().toUtc().toIso8601String()
       ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
@@ -2654,7 +2780,109 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _restoreValve(ValveRecord record) async {
+    if (readOnly) return;
+    final json = record.toJson()
+      ..['retiredAt'] = null
+      ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+    await _saveCollectionRecord('valve_records_v1', record.id, json);
+    _loadFunctionalCollections(inspection!.id);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _editValveTest(
+    ValveRecord valve, {
+    FunctionalValveTest? existing,
+    bool repeat = false,
+  }) async {
+    if (readOnly) return;
+    final tests = valveTests
+        .where((value) => value.valveId == valve.id)
+        .toList();
+    final test = await ValveTestEditor.show(
+      context,
+      inspectionId: inspection!.id,
+      valve: valve,
+      sequence: tests.length + 1,
+      existing: existing,
+      repeat: repeat,
+    );
+    if (test == null) return;
+    await _saveCollectionRecord(
+      'functional_valve_tests_v1',
+      test.id,
+      test.toJson(),
+    );
+    final recordJson = valve.toJson();
+    final ids = [...valve.testIds];
+    if (!ids.contains(test.id)) ids.add(test.id);
+    recordJson['testIds'] = ids;
+    recordJson['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+    await _saveCollectionRecord('valve_records_v1', valve.id, recordJson);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _setValveTestAccepted(
+    ValveRecord valve,
+    FunctionalValveTest selected,
+  ) async {
+    if (readOnly || !selected.valid) return;
+    for (final test in valveTests.where((value) => value.valveId == valve.id)) {
+      final json = test.toJson()
+        ..['accepted'] = test.id == selected.id
+        ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+      await _saveCollectionRecord('functional_valve_tests_v1', test.id, json);
+    }
+    final valveJson = valve.toJson()
+      ..['result'] = selected.result
+      ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+    await _saveCollectionRecord('valve_records_v1', valve.id, valveJson);
+    _loadFunctionalCollections(inspection!.id);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _invalidateValveTest(FunctionalValveTest test) async {
+    if (readOnly) return;
+    final actorId = context.read<AppState>().user.id;
+    final reason = await _requiredReason('Invalidar prueba de válvula');
+    if (reason == null) return;
+    final json = test.toJson()
+      ..['accepted'] = false
+      ..['invalidatedAt'] = DateTime.now().toUtc().toIso8601String()
+      ..['invalidatedBy'] = actorId
+      ..['invalidationReason'] = reason
+      ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+    await _saveCollectionRecord('functional_valve_tests_v1', test.id, json);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _captureValvePhoto(
+    ValveRecord valve, {
+    FunctionalValveTest? test,
+  }) async {
+    final photo = await _captureRelatedPhoto(
+      category: 'válvula',
+      componentId: valve.id,
+      testId: test?.id,
+    );
+    if (photo == null) return;
+    if (test == null) {
+      final json = valve.toJson()
+        ..['photoIds'] = [...valve.photoIds, photo.id]
+        ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+      await _saveCollectionRecord('valve_records_v1', valve.id, json);
+    } else {
+      final json = test.toJson()
+        ..['photoIds'] = [...test.photoIds, photo.id]
+        ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+      await _saveCollectionRecord('functional_valve_tests_v1', test.id, json);
+    }
+    _loadFunctionalCollections(inspection!.id);
+    if (mounted) setState(() {});
+  }
+
   Future<void> _moveValve(ValveRecord record, int delta) async {
+    if (readOnly) return;
     final active = valveRecords.where((value) => value.active).toList();
     final index = active.indexWhere((value) => value.id == record.id);
     final target = index + delta;
@@ -2675,74 +2903,13 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
   }
 
   Future<void> _addReducerRun() async {
-    final inlet = TextEditingController(),
-        target = TextEditingController(),
-        outlet = TextEditingController(),
-        flow = TextEditingController();
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Agregar corrida de reductora'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: inlet,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Presión de entrada (kPa)',
-                ),
-              ),
-              TextField(
-                controller: target,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Presión objetivo (kPa)',
-                ),
-              ),
-              TextField(
-                controller: outlet,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Presión de salida (kPa)',
-                ),
-              ),
-              TextField(
-                controller: flow,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Caudal (L/s)'),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Guardar'),
-          ),
-        ],
-      ),
+    if (readOnly) return;
+    final run = await ReducerRunEditor.show(
+      context,
+      inspectionId: inspection!.id,
+      order: reducerRuns.length + 1,
     );
-    if (accepted == true) {
-      final now = DateTime.now().toUtc();
-      final run = ReducerRun(
-        reducerRunId: const Uuid().v4(),
-        reducerId: 'reducer:${inspection!.id}',
-        inspectionId: inspection!.id,
-        order: reducerRuns.length + 1,
-        conditionKey: 'default',
-        inletPressure: inlet.text.trim(),
-        targetPressure: target.text.trim(),
-        outletPressure: outlet.text.trim(),
-        flow: flow.text.trim(),
-        createdAt: now,
-        updatedAt: now,
-      );
+    if (run != null) {
       await _saveCollectionRecord(
         'reducer_runs_v1',
         run.reducerRunId,
@@ -2751,13 +2918,49 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
       _loadFunctionalCollections(inspection!.id);
       if (mounted) setState(() {});
     }
-    inlet.dispose();
-    target.dispose();
-    outlet.dispose();
-    flow.dispose();
   }
 
+  Future<void> _editReducerRun(
+    ReducerRun existing, {
+    bool duplicate = false,
+  }) async {
+    if (readOnly || !existing.valid) return;
+    final run = await ReducerRunEditor.show(
+      context,
+      inspectionId: inspection!.id,
+      order: reducerRuns.length + 1,
+      existing: existing,
+      duplicate: duplicate,
+    );
+    if (run == null) return;
+    await _saveCollectionRecord(
+      'reducer_runs_v1',
+      run.reducerRunId,
+      run.toJson(),
+    );
+    _loadFunctionalCollections(inspection!.id);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _showReducerComparison() => showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Comparación de corridas'),
+      content: SizedBox(
+        width: MediaQuery.sizeOf(context).width * .9,
+        child: ReducerRunComparison(runs: reducerRuns),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Cerrar'),
+        ),
+      ],
+    ),
+  );
+
   Future<void> _acceptReducerRun(ReducerRun selected) async {
+    if (readOnly || !selected.valid) return;
     for (final run in reducerRuns.where(
       (value) => value.conditionKey == selected.conditionKey && value.valid,
     )) {
@@ -2771,78 +2974,53 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
   }
 
   Future<void> _invalidateReducerRun(ReducerRun run) async {
+    if (readOnly) return;
+    final actorId = context.read<AppState>().user.id;
+    final reason = await _requiredReason('Invalidar corrida de reductora');
+    if (reason == null) return;
     final json = run.toJson()
       ..['accepted'] = false
       ..['invalidatedAt'] = DateTime.now().toUtc().toIso8601String()
-      ..['invalidatedBy'] = context.read<AppState>().user.id
-      ..['invalidationReason'] = 'Invalidada por el técnico';
+      ..['invalidatedBy'] = actorId
+      ..['invalidationReason'] = reason;
+    await _saveCollectionRecord('reducer_runs_v1', run.reducerRunId, json);
+    _loadFunctionalCollections(inspection!.id);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _removeReducerAcceptance(ReducerRun run) async {
+    if (readOnly || !run.valid) return;
+    final json = run.toJson()
+      ..['accepted'] = false
+      ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+    await _saveCollectionRecord('reducer_runs_v1', run.reducerRunId, json);
+    _loadFunctionalCollections(inspection!.id);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _captureReducerPhoto(ReducerRun run) async {
+    final photo = await _captureRelatedPhoto(
+      category: 'reductora',
+      componentId: run.reducerId,
+      testId: run.reducerRunId,
+    );
+    if (photo == null) return;
+    final json = run.toJson()
+      ..['photoIds'] = [...run.photoIds, photo.id]
+      ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
     await _saveCollectionRecord('reducer_runs_v1', run.reducerRunId, json);
     _loadFunctionalCollections(inspection!.id);
     if (mounted) setState(() {});
   }
 
   Future<void> _addAlarmAttempt() async {
-    String type = FunctionalCatalogs.alarmTypes.first;
-    final other = TextEditingController(), comments = TextEditingController();
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (_, setLocal) => AlertDialog(
-          title: const Text('Agregar intento de alarma'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<String>(
-                initialValue: type,
-                items: [
-                  for (final value in FunctionalCatalogs.alarmTypes)
-                    DropdownMenuItem(value: value, child: Text(value)),
-                ],
-                onChanged: (value) => setLocal(() => type = value!),
-                decoration: const InputDecoration(labelText: 'Tipo'),
-              ),
-              if (type.toLowerCase() == 'otra')
-                TextField(
-                  controller: other,
-                  decoration: const InputDecoration(
-                    labelText: 'Descripción obligatoria',
-                  ),
-                ),
-              TextField(
-                controller: comments,
-                decoration: const InputDecoration(
-                  labelText: 'Comentarios opcionales',
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton(
-              onPressed:
-                  type.toLowerCase() == 'otra' && other.text.trim().isEmpty
-                  ? null
-                  : () => Navigator.pop(dialogContext, true),
-              child: const Text('Agregar'),
-            ),
-          ],
-        ),
-      ),
+    if (readOnly) return;
+    final attempt = await AlarmAttemptEditor.show(
+      context,
+      inspectionId: inspection!.id,
+      nextAttempt: _nextAlarmAttempt,
     );
-    if (accepted == true) {
-      final attempt = AlarmAttemptRecord(
-        id: const Uuid().v4(),
-        inspectionId: inspection!.id,
-        alarmType: type,
-        otherDescription: other.text.trim(),
-        attemptNumber:
-            alarmAttempts.where((value) => value.alarmType == type).length + 1,
-        comments: comments.text.trim(),
-        createdAt: DateTime.now().toUtc(),
-      );
+    if (attempt != null) {
       await _saveCollectionRecord(
         'alarm_attempts_v1',
         attempt.id,
@@ -2851,8 +3029,122 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
       _loadFunctionalCollections(inspection!.id);
       if (mounted) setState(() {});
     }
-    other.dispose();
-    comments.dispose();
+  }
+
+  int _nextAlarmAttempt(String type) =>
+      alarmAttempts
+          .where((value) => value.alarmType == type)
+          .map((value) => value.attemptNumber)
+          .fold(0, (a, b) => a > b ? a : b) +
+      1;
+
+  Future<void> _editAlarmAttempt(
+    AlarmAttemptRecord existing, {
+    bool repeat = false,
+  }) async {
+    if (readOnly || !existing.valid) return;
+    final attempt = await AlarmAttemptEditor.show(
+      context,
+      inspectionId: inspection!.id,
+      nextAttempt: _nextAlarmAttempt,
+      existing: existing,
+      repeat: repeat,
+    );
+    if (attempt == null) return;
+    await _saveCollectionRecord(
+      'alarm_attempts_v1',
+      attempt.id,
+      attempt.toJson(),
+    );
+    _loadFunctionalCollections(inspection!.id);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _invalidateAlarmAttempt(AlarmAttemptRecord attempt) async {
+    if (readOnly) return;
+    final actorId = context.read<AppState>().user.id;
+    final reason = await _requiredReason('Invalidar intento de alarma');
+    if (reason == null) return;
+    final json = attempt.toJson()
+      ..['invalidatedAt'] = DateTime.now().toUtc().toIso8601String()
+      ..['invalidatedBy'] = actorId
+      ..['invalidationReason'] = reason
+      ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+    await _saveCollectionRecord('alarm_attempts_v1', attempt.id, json);
+    _loadFunctionalCollections(inspection!.id);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _captureAlarmPhoto(AlarmAttemptRecord attempt) async {
+    final photo = await _captureRelatedPhoto(
+      category: 'alarma',
+      testId: attempt.id,
+    );
+    if (photo == null) return;
+    final json = attempt.toJson()
+      ..['photoIds'] = [...attempt.photoIds, photo.id]
+      ..['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+    await _saveCollectionRecord('alarm_attempts_v1', attempt.id, json);
+    _loadFunctionalCollections(inspection!.id);
+    if (mounted) setState(() {});
+  }
+
+  Future<InspectionPhoto?> _captureRelatedPhoto({
+    required String category,
+    String? componentId,
+    String? testId,
+  }) async {
+    if (readOnly) return null;
+    final state = context.read<AppState>();
+    final photo = await photoService.acquire(
+      pickerSource: ImageSource.camera,
+      hydrantId: widget.hydrantId,
+      inspectionId: inspection!.id,
+      inspectionType: 'f02B',
+      category: category,
+      componentId: componentId,
+      testId: testId,
+      userId: state.user.id,
+      userName: state.user.fullName,
+      brigadeId: state.user.brigadeId,
+      deviceId: state.user.deviceId,
+    );
+    if (photo == null) return null;
+    inspection = inspection!.copyWith(
+      photoIds: [...inspection!.photoIds, photo.id],
+    );
+    await _save();
+    return photo;
+  }
+
+  Future<String?> _requiredReason(String title) async {
+    var value = '';
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: TextFormField(
+          autofocus: true,
+          maxLines: 3,
+          decoration: const InputDecoration(labelText: 'Motivo obligatorio'),
+          onChanged: (text) => value = text,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (value.trim().isNotEmpty) {
+                Navigator.pop(dialogContext, value.trim());
+              }
+            },
+            child: const Text('Confirmar'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _valvesAndReducerStep() => Column(
@@ -2878,41 +3170,196 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
             ),
             if (valveRecords.where((value) => value.active).isEmpty)
               const Text('Sin válvulas registradas.')
-            else
-              for (final valve in valveRecords.where((value) => value.active))
-                ListTile(
-                  title: Text(
-                    '${valve.label} · ${valve.type.isEmpty ? 'Tipo no indicado' : valve.type}',
-                  ),
-                  subtitle: Text(
-                    'Diámetro: ${valve.diameter.isEmpty ? 'No indicado' : valve.diameter} · Posición: ${valve.initialPosition.isEmpty ? 'No indicada' : valve.initialPosition}',
-                  ),
-                  trailing: PopupMenuButton<String>(
-                    onSelected: (action) => switch (action) {
-                      'edit' => _editValve(existing: valve),
-                      'duplicate' => _editValve(
-                        existing: valve,
-                        duplicate: true,
+            else ...[
+              SizedBox(
+                height: 52,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    for (final valve in valveRecords.where(
+                      (value) => value.active,
+                    ))
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: Text(valve.label),
+                          selected: selectedValveId == valve.id,
+                          onSelected: (_) =>
+                              setState(() => selectedValveId = valve.id),
+                        ),
                       ),
-                      'up' => _moveValve(valve, -1),
-                      'down' => _moveValve(valve, 1),
-                      _ => _retireValve(valve),
-                    },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'edit', child: Text('Editar')),
-                      PopupMenuItem(
-                        value: 'duplicate',
-                        child: Text('Duplicar configuración'),
+                  ],
+                ),
+              ),
+              for (final valve in valveRecords.where(
+                (value) => value.active && value.id == selectedValveId,
+              ))
+                Card(
+                  child: ExpansionTile(
+                    key: PageStorageKey('valve-${valve.id}'),
+                    title: Text(
+                      '${valve.label} · ${valve.type.isEmpty ? 'Tipo no indicado' : valve.type}',
+                    ),
+                    subtitle: Text(
+                      'Diámetro: ${valve.diameter.isEmpty ? 'No indicado' : valve.diameter} · ${valveTests.where((test) => test.valveId == valve.id).length} pruebas',
+                    ),
+                    trailing: PopupMenuButton<String>(
+                      tooltip: 'Acciones de ${valve.label}',
+                      onSelected: (action) => switch (action) {
+                        'edit' => _editValve(existing: valve),
+                        'duplicate' => _editValve(
+                          existing: valve,
+                          duplicate: true,
+                        ),
+                        'up' => _moveValve(valve, -1),
+                        'down' => _moveValve(valve, 1),
+                        'test' => _editValveTest(valve),
+                        'photo' => _captureValvePhoto(valve),
+                        _ => _retireValve(valve),
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(
+                          value: 'edit',
+                          child: Text('Abrir detalle y editar'),
+                        ),
+                        PopupMenuItem(
+                          value: 'test',
+                          child: Text('Nueva prueba'),
+                        ),
+                        PopupMenuItem(
+                          value: 'photo',
+                          child: Text('Asociar fotografía'),
+                        ),
+                        PopupMenuItem(
+                          value: 'duplicate',
+                          child: Text('Duplicar configuración'),
+                        ),
+                        PopupMenuItem(value: 'up', child: Text('Mover arriba')),
+                        PopupMenuItem(
+                          value: 'down',
+                          child: Text('Mover abajo'),
+                        ),
+                        PopupMenuItem(
+                          value: 'retire',
+                          child: Text('Retirar lógicamente'),
+                        ),
+                      ],
+                    ),
+                    children: [
+                      ListTile(
+                        title: const Text('Posición'),
+                        subtitle: Text(
+                          valve.initialPosition.isEmpty
+                              ? 'No indicada'
+                              : valve.initialPosition,
+                        ),
                       ),
-                      PopupMenuItem(value: 'up', child: Text('Mover arriba')),
-                      PopupMenuItem(value: 'down', child: Text('Mover abajo')),
-                      PopupMenuItem(
-                        value: 'retire',
-                        child: Text('Retirar lógicamente'),
+                      ListTile(
+                        title: const Text('Configuración'),
+                        subtitle: Text(
+                          '${valve.configuration['notes'] ?? 'Sin detalle'}',
+                        ),
                       ),
+                      ListTile(
+                        title: const Text('Resultado individual'),
+                        subtitle: Text(
+                          valve.result.isEmpty ? 'Pendiente' : valve.result,
+                        ),
+                      ),
+                      for (final test in valveTests.where(
+                        (value) => value.valveId == valve.id,
+                      ))
+                        ListTile(
+                          leading: Icon(
+                            test.valid
+                                ? test.accepted
+                                      ? Icons.check_circle
+                                      : Icons.science_outlined
+                                : Icons.block,
+                          ),
+                          title: Text(
+                            'Prueba ${test.testSequence} · ${test.result.isEmpty ? 'Borrador' : test.result}',
+                          ),
+                          subtitle: Text(
+                            test.valid
+                                ? 'Apertura ${test.openingTimeSeconds}s · Cierre ${test.closingTimeSeconds}s · ${test.photoIds.length} fotos'
+                                : 'Invalidada: ${test.invalidationReason ?? 'Sin motivo legible'}',
+                          ),
+                          trailing: test.valid && !readOnly
+                              ? PopupMenuButton<String>(
+                                  onSelected: (action) => switch (action) {
+                                    'edit' => _editValveTest(
+                                      valve,
+                                      existing: test,
+                                    ),
+                                    'repeat' => _editValveTest(
+                                      valve,
+                                      existing: test,
+                                      repeat: true,
+                                    ),
+                                    'accept' => _setValveTestAccepted(
+                                      valve,
+                                      test,
+                                    ),
+                                    'photo' => _captureValvePhoto(
+                                      valve,
+                                      test: test,
+                                    ),
+                                    _ => _invalidateValveTest(test),
+                                  },
+                                  itemBuilder: (_) => const [
+                                    PopupMenuItem(
+                                      value: 'edit',
+                                      child: Text('Editar'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'repeat',
+                                      child: Text('Repetir'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'accept',
+                                      child: Text('Seleccionar válida'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'photo',
+                                      child: Text('Asociar evidencia'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'invalidate',
+                                      child: Text('Invalidar'),
+                                    ),
+                                  ],
+                                )
+                              : null,
+                        ),
                     ],
                   ),
                 ),
+            ],
+            if (valveRecords.any((value) => !value.active))
+              ExpansionTile(
+                title: Text(
+                  'Válvulas retiradas (${valveRecords.where((value) => !value.active).length})',
+                ),
+                children: [
+                  for (final valve in valveRecords.where(
+                    (value) => !value.active,
+                  ))
+                    ListTile(
+                      title: Text(valve.label),
+                      subtitle: const Text(
+                        'Retirada lógicamente; historial conservado',
+                      ),
+                      trailing: readOnly
+                          ? null
+                          : IconButton(
+                              tooltip: 'Restaurar válvula',
+                              onPressed: () => _restoreValve(valve),
+                              icon: const Icon(Icons.restore),
+                            ),
+                    ),
+                ],
+              ),
           ],
         ),
       ),
@@ -3000,6 +3447,13 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
                   onPressed: _addReducerRun,
                   icon: const Icon(Icons.add_chart),
                 ),
+                IconButton(
+                  tooltip: 'Comparar corridas',
+                  onPressed: reducerRuns.isEmpty
+                      ? null
+                      : _showReducerComparison,
+                  icon: const Icon(Icons.compare_arrows),
+                ),
               ],
             ),
             for (final run in reducerRuns)
@@ -3020,13 +3474,34 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
                 ),
                 trailing: run.valid
                     ? PopupMenuButton<String>(
-                        onSelected: (action) => action == 'accept'
-                            ? _acceptReducerRun(run)
-                            : _invalidateReducerRun(run),
+                        onSelected: (action) => switch (action) {
+                          'edit' => _editReducerRun(run),
+                          'repeat' => _editReducerRun(run, duplicate: true),
+                          'accept' => _acceptReducerRun(run),
+                          'unaccept' => _removeReducerAcceptance(run),
+                          'photo' => _captureReducerPhoto(run),
+                          _ => _invalidateReducerRun(run),
+                        },
                         itemBuilder: (_) => const [
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: Text('Abrir detalle y editar'),
+                          ),
+                          PopupMenuItem(
+                            value: 'repeat',
+                            child: Text('Repetir como nueva corrida'),
+                          ),
                           PopupMenuItem(
                             value: 'accept',
                             child: Text('Aceptar corrida'),
+                          ),
+                          PopupMenuItem(
+                            value: 'unaccept',
+                            child: Text('Retirar aceptación'),
+                          ),
+                          PopupMenuItem(
+                            value: 'photo',
+                            child: Text('Asociar evidencia'),
                           ),
                           PopupMenuItem(
                             value: 'invalidate',
@@ -3298,11 +3773,38 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
                 ),
                 subtitle: Text(
                   attempt.valid
-                      ? (attempt.result.isEmpty
-                            ? 'Borrador independiente'
-                            : attempt.result)
-                      : 'Intento invalidado',
+                      ? '${attempt.result.isEmpty ? 'Borrador independiente' : attempt.result} · Latencia ${attempt.latencyMs == null ? 'No calculable' : '${attempt.latencyMs} ms'} · ${attempt.photoIds.length} fotos'
+                      : 'Intento invalidado: ${attempt.invalidationReason ?? 'Sin motivo legible'}',
                 ),
+                trailing: attempt.valid && !readOnly
+                    ? PopupMenuButton<String>(
+                        tooltip: 'Acciones del intento',
+                        onSelected: (action) => switch (action) {
+                          'edit' => _editAlarmAttempt(attempt),
+                          'repeat' => _editAlarmAttempt(attempt, repeat: true),
+                          'photo' => _captureAlarmPhoto(attempt),
+                          _ => _invalidateAlarmAttempt(attempt),
+                        },
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: Text('Abrir y editar'),
+                          ),
+                          PopupMenuItem(
+                            value: 'repeat',
+                            child: Text('Repetir intento'),
+                          ),
+                          PopupMenuItem(
+                            value: 'photo',
+                            child: Text('Asociar evidencia'),
+                          ),
+                          PopupMenuItem(
+                            value: 'invalidate',
+                            child: Text('Invalidar'),
+                          ),
+                        ],
+                      )
+                    : null,
               ),
           ],
         ),
@@ -3615,6 +4117,34 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
       ),
       const SizedBox(height: 12),
       for (final id in _activeInstrumentIds) _instrumentTile(id),
+      for (final id in inspection!.instrumentIds)
+        if (_instrument(id) case final InstrumentRecord item
+            when item.lifecycleStatus == InstrumentLifecycleStatus.unfit)
+          _instrumentTile(id),
+      if (inspection!.instrumentIds.any(
+        (id) => _instrument(id)?.deletedAt != null,
+      ))
+        ExpansionTile(
+          title: const Text('Instrumentos retirados'),
+          children: [
+            for (final id in inspection!.instrumentIds)
+              if (_instrument(id) case final InstrumentRecord item
+                  when item.deletedAt != null)
+                ListTile(
+                  title: Text(item.type),
+                  subtitle: const Text(
+                    'Retirado lógicamente; snapshots conservados',
+                  ),
+                  trailing: readOnly
+                      ? null
+                      : IconButton(
+                          tooltip: 'Restaurar instrumento',
+                          onPressed: () => _restoreInstrument(item),
+                          icon: const Icon(Icons.restore),
+                        ),
+                ),
+          ],
+        ),
       FilledButton.icon(
         onPressed: _addInstrument,
         icon: const Icon(Icons.add),
@@ -3635,10 +4165,22 @@ class _FunctionalInspectionPageState extends State<FunctionalInspectionPage> {
         ),
         isThreeLine: true,
         trailing: PopupMenuButton<String>(
-          onSelected: (action) => action == 'unfit'
-              ? _markInstrumentUnfit(item)
-              : _removeInstrument(item),
+          onSelected: (action) => switch (action) {
+            'edit' => _editInstrument(item),
+            'unfit' => _markInstrumentUnfit(item),
+            'photo' => _captureInstrumentPhoto(item, certificate: false),
+            'certificate' => _captureInstrumentPhoto(item, certificate: true),
+            'history' => _showInstrumentHistory(item),
+            _ => _removeInstrument(item),
+          },
           itemBuilder: (_) => const [
+            PopupMenuItem(value: 'edit', child: Text('Editar')),
+            PopupMenuItem(value: 'photo', child: Text('Adjuntar fotografía')),
+            PopupMenuItem(
+              value: 'certificate',
+              child: Text('Fotografiar certificado'),
+            ),
+            PopupMenuItem(value: 'history', child: Text('Historial y series')),
             PopupMenuItem(value: 'unfit', child: Text('Marcar no apto')),
             PopupMenuItem(value: 'remove', child: Text('Retirar instrumento')),
           ],
