@@ -161,6 +161,12 @@ class VisualInspectionRepository {
       ..['id'] = const Uuid().v4()
       ..['status'] = InspectionStatus.inProgress.name
       ..['currentStep'] = 1
+      ..['visualFlowVersion'] = 2
+      ..['publicComponentIndex'] = 0
+      ..['privateComponentIndex'] = 0
+      ..['flowMeterComponentConfirmed'] = false
+      ..['flowMeterComponentReviewedBy'] = null
+      ..['flowMeterComponentReviewedAt'] = null
       ..['completedAt'] = null
       ..['createdAt'] = now.toIso8601String()
       ..['createdBy'] = supervisor.id
@@ -172,6 +178,19 @@ class VisualInspectionRepository {
       ..['revisionReason'] = reason.trim()
       ..['activeRevision'] = true
       ..['supervisorReviewRequired'] = true;
+    json['componentInspections'] = [
+      for (final raw in json['componentInspections'] as List? ?? const [])
+        {
+          ...Map<String, dynamic>.from(raw as Map),
+          'explicitlyConfirmed': false,
+          'suggestedDefaultsApplied': false,
+          'reviewStatus': 'pending',
+          'reviewedBy': null,
+          'reviewedAt': null,
+          'quickReviewApplied': false,
+          'legacyRequiresConfirmation': true,
+        },
+    ];
     final revision = VisualInspection.fromJson(json);
     await save(revision);
     await index.put(_indexKey(revision.hydrantId), revision.id);

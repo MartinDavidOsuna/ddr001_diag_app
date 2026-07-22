@@ -4,6 +4,12 @@ Todos los cambios notables de **DIAGNOSTICO HIDRANTES** se documentan aquí.
 
 ## Unreleased — Etapa 3
 
+- Etapa 5B divide Componentes internos de REPORTE VISUAL en listas independientes de red pública y red privada, elimina el esquema productivo y amplía el flujo de ocho a nueve pasos con adaptación legacy idempotente.
+- Los pasos 5 y 6 funcionan como subasistentes secuenciales por componente, con defaults favorables no confirmatorios, índice, recuperación de posición, resumen previo y confirmación explícita trazable.
+- El esquema de RV ahora representa espacialmente gabinete, redes pública/privada, tuberías, filtro y salidas dinámicas mediante un lienzo interactivo accesible.
+- Los fondos del esquema RV usan assets WebP optimizados A1–A5 sin marcas; los estados y la interacción permanecen como overlays Flutter y el esquema dibujado se conserva solo como fallback.
+- RV conserva el medidor como fuente canónica del paso 4, añade compatibilidad read-old/write-new y protege reportes finalizados.
+- Se incorporan validación por componente, evidencia condicional y revisión rápida sin sobrescritura.
 - Etapa 4D incorpora infraestructura de pruebas unitarias, dominio, serialización, Hive, recuperación, medios, widgets, MethodChannel e integración offline previa a DDR001 API.
 - Se agregan fixtures, fakes, entorno Hive temporal, matriz P0/P1/P2 y guía reproducible de ejecución; las suites quedan pendientes de ejecución manual por restricción de esta intervención.
 - El adaptador celular admite inyección controlada del canal y plataforma para probar el contrato sin alterar la implementación Android ni realizar conexiones reales.

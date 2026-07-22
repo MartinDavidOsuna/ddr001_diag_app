@@ -49,7 +49,7 @@ Estado inicial: No ejecutado. Dispositivo, fecha, ejecutor y observaciones deben
 | M03 | Navegación | App iniciada | Bottom, swipe, Atrás, gesto | Solo cierra desde Inicio con confirmación | S1 | No ejecutado | Video | Pendiente | Pendiente | Pendiente | |
 | M04 | Inicio/filtros | Dataset conocido | Pulsar 4 métricas/6 filtros | Total=listado, chip visible, vertical intacto | S1 | No ejecutado | Video+conteo | Pendiente | Pendiente | Pendiente | |
 | M05 | Alertas | Alertas con/sin hidrante | Abrir alertas | Ficha/detalle/mensaje controlado | S2 | No ejecutado | Capturas | Pendiente | Pendiente | Pendiente | |
-| M06 | RV | Hidrante asignado | Completar 8 pasos | 100 %, ficha y cierre inmutable | S1 | No ejecutado | Video+JSON | Pendiente | Pendiente | Pendiente | |
+| M06 | RV | Hidrante asignado | Completar 9 pasos | 100 %, ficha y cierre inmutable | S1 | No ejecutado | Video+JSON | Pendiente | Pendiente | Pendiente | |
 | M07 | RV validación | RV nuevo | Omitir cada obligatorio | Error local y borrador conservado | S1 | No ejecutado | Capturas | Pendiente | Pendiente | Pendiente | |
 | M08 | Ubicación | Permisos variables | Denegar/apagar/timeout/capturar | Motivo técnico o posición válida | S1 | No ejecutado | Traza+captura | Pendiente | Pendiente | Pendiente | |
 | M09 | Daños | RV paso 7 | Daño sin/con foto y archivo faltante | Bloqueo/evidencia correctos | S1 | No ejecutado | Video | Pendiente | Pendiente | Pendiente | |

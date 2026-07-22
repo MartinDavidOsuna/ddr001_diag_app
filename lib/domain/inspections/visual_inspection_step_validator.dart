@@ -10,6 +10,8 @@ import '../network/cellular_network_diagnostic.dart';
 import '../network/wifi_technical_assessment.dart';
 import '../network/wifi_assessment_rules.dart';
 import 'visual_inspection.dart';
+import '../../features/visual_report/domain/visual_component_rules.dart';
+import '../../features/visual_report/domain/visual_component_models.dart';
 
 class InspectionValidationError {
   const InspectionValidationError(this.stepNumber, this.fieldKey, this.message);
@@ -37,16 +39,17 @@ class VisualInspectionStepValidator {
         2 => validateLocation(value),
         3 => validateAccess(value),
         4 => validateFlowMeter(value),
-        5 => validatePressureValve(value),
-        6 => validateEnergyCommunication(value),
-        7 => validateDamage(value),
-        8 => validatePhotosAndClose(value),
+        5 => validatePublicComponents(value),
+        6 => validatePrivateComponents(value),
+        7 => validateEnergyCommunication(value),
+        8 => validateDamage(value),
+        9 => validatePhotosAndClose(value),
         _ => const InspectionValidationResult([]),
       };
 
   InspectionValidationResult validateAll(VisualInspection value) =>
       InspectionValidationResult([
-        for (var step = 1; step <= 8; step++)
+        for (var step = 1; step <= 9; step++)
           ...validateStep(value, step).errors,
       ]);
 
@@ -138,6 +141,118 @@ class VisualInspectionStepValidator {
               : null,
       });
 
+  InspectionValidationResult validateVisualComponents(VisualInspection value) {
+    if (value.hydrantConfiguration == null ||
+        value.componentInspections.isEmpty) {
+      return validatePressureValve(value);
+    }
+    final errors = <InspectionValidationError>[];
+    for (final component in value.componentInspections) {
+      final hasPhoto = photos.any(
+        (photo) => photo.componentId == component.id && _counts(photo),
+      );
+      for (final issue in VisualComponentRules.validate(
+        component,
+        hasValidPhoto: hasPhoto,
+      )) {
+        errors.add(
+          InspectionValidationError(
+            5,
+            'component:${component.id}:${issue.code}',
+            issue.message,
+          ),
+        );
+      }
+    }
+    return InspectionValidationResult(errors);
+  }
+
+  InspectionValidationResult validatePublicComponents(VisualInspection value) {
+    final errors = <InspectionValidationError>[
+      ...validateFlowMeter(value).errors.map(
+        (error) => InspectionValidationError(5, error.fieldKey, error.message),
+      ),
+      if (!value.flowMeterComponentConfirmed)
+        const InspectionValidationError(
+          5,
+          'flowMeterComponentConfirmation',
+          'Confirma el resumen del medidor dentro de la red pública.',
+        ),
+      if (value.victaulicGroupInspection == null ||
+          value.victaulicGroupInspection!.quantity < 1)
+        const InspectionValidationError(
+          5,
+          'victaulicQuantity',
+          'Indica la cantidad de juntas Victaulic.',
+        ),
+      if (value.victaulicGroupInspection != null &&
+          value.victaulicGroupInspection!.material.trim().isEmpty)
+        const InspectionValidationError(
+          5,
+          'victaulicMaterial',
+          'Indica el material de las juntas Victaulic.',
+        ),
+      ..._validateComponents(
+        value,
+        step: 5,
+        compartments: const {VisualCompartment.publicNetwork},
+      ),
+    ];
+    return InspectionValidationResult(errors);
+  }
+
+  InspectionValidationResult validatePrivateComponents(VisualInspection value) {
+    return InspectionValidationResult(
+      _validateComponents(
+        value,
+        step: 6,
+        compartments: const {
+          VisualCompartment.privateNetwork,
+          VisualCompartment.outlet,
+        },
+      ),
+    );
+  }
+
+  List<InspectionValidationError> _validateComponents(
+    VisualInspection value, {
+    required int step,
+    required Set<VisualCompartment> compartments,
+  }) {
+    if (value.hydrantConfiguration == null ||
+        value.componentInspections.isEmpty) {
+      return step == 5
+          ? validatePressureValve(value).errors
+              .map((error) => InspectionValidationError(
+                    step,
+                    error.fieldKey,
+                    error.message,
+                  ))
+              .toList()
+          : const [];
+    }
+    final errors = <InspectionValidationError>[];
+    for (final component in value.componentInspections.where(
+      (component) =>
+          component.active && compartments.contains(component.compartment),
+    )) {
+      final hasPhoto = photos.any(
+        (photo) => photo.componentId == component.id && _counts(photo),
+      );
+      for (final issue in VisualComponentRules.validate(
+        component,
+        hasValidPhoto: hasPhoto,
+      )) {
+        errors.add(InspectionValidationError(
+          step,
+          'component:${component.id}:${issue.code}',
+          issue.message,
+        ));
+      }
+    }
+    return errors;
+  }
+
   InspectionValidationResult validateEnergyCommunication(
     VisualInspection value,
   ) {
@@ -150,7 +265,7 @@ class VisualInspectionStepValidator {
         : CellularNetworkDiagnostic.fromJson(
             value.energyCommunication.cellularDiagnostic,
           );
-    return _result(6, {
+    return _result(7, {
       'energy': value.energyCommunication.energyAvailabilityAnswer == null
           ? 'Indica si hay energía disponible.'
           : null,
@@ -186,7 +301,7 @@ class VisualInspectionStepValidator {
             DamageComponentCatalog.components.length) {
       errors.add(
         const InspectionValidationError(
-          7,
+          8,
           'noDamage',
           'Confirma “Sin daños visibles” o registra los daños encontrados.',
         ),
@@ -196,7 +311,7 @@ class VisualInspectionStepValidator {
         value.noVisibleDamageConfirmed) {
       errors.add(
         const InspectionValidationError(
-          7,
+          8,
           'damageConflict',
           'No puedes confirmar “Sin daños visibles” y registrar daños simultáneamente.',
         ),
@@ -208,7 +323,7 @@ class VisualInspectionStepValidator {
             .isEmpty) {
           errors.add(
             InspectionValidationError(
-              7,
+              8,
               'damageAssessment:$component',
               'Evalúa el componente $component.',
             ),
@@ -220,7 +335,7 @@ class VisualInspectionStepValidator {
       if (!_hasValidCategory('daño:$component')) {
         errors.add(
           InspectionValidationError(
-            7,
+            8,
             'damageEvidence:$component',
             'El daño de $component requiere evidencia fotográfica.',
           ),
@@ -232,7 +347,7 @@ class VisualInspectionStepValidator {
       if ((damage['category'] as String? ?? '').isEmpty) {
         errors.add(
           const InspectionValidationError(
-            7,
+            8,
             'damageCategory',
             'Un daño no tiene categoría.',
           ),
@@ -241,7 +356,7 @@ class VisualInspectionStepValidator {
       if ((damage['affectedComponent'] as String? ?? '').isEmpty) {
         errors.add(
           const InspectionValidationError(
-            7,
+            8,
             'damageComponent',
             'Un daño no tiene componente.',
           ),
@@ -250,7 +365,7 @@ class VisualInspectionStepValidator {
       if ((damage['severity'] as String? ?? '').isEmpty) {
         errors.add(
           const InspectionValidationError(
-            7,
+            8,
             'damageSeverity',
             'Un daño no tiene severidad.',
           ),
@@ -259,7 +374,7 @@ class VisualInspectionStepValidator {
       if ((damage['photoIds'] as List? ?? []).isEmpty) {
         errors.add(
           const InspectionValidationError(
-            7,
+            8,
             'damagePhoto',
             'Cada daño requiere al menos una fotografía.',
           ),
@@ -270,7 +385,7 @@ class VisualInspectionStepValidator {
   }
 
   InspectionValidationResult validatePhotosAndClose(VisualInspection value) =>
-      _result(8, {
+      _result(9, {
         for (final category in _requiredPhotoCategories(value))
           category: !_hasValidCategory(category)
               ? 'Falta la fotografía obligatoria de ${_label(category)}.'

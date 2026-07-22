@@ -4,7 +4,7 @@ import '../../core/services/app_state.dart';
 import '../../features/auth/auth_pages.dart';
 import '../../features/home/home_page.dart';
 import '../../features/hydrants/hydrant_pages.dart';
-import '../../features/hydrants/inspection_placeholder_page.dart';
+import '../../features/visual_report/presentation/visual_report_page.dart';
 import '../../features/hydrants/new_survey_page.dart';
 import '../../features/hydrants/photo_gallery_page.dart';
 import '../../features/functional/functional_inspection_page.dart';
@@ -81,7 +81,7 @@ GoRouter createRouter(AppState state) => GoRouter(
                           ? FunctionalInspectionPage(
                               hydrantId: route.pathParameters['id']!,
                             )
-                          : InspectionPlaceholderPage(
+                          : VisualReportPage(
                               hydrantId: route.pathParameters['id']!,
                               type: route.pathParameters['type']!,
                             ),

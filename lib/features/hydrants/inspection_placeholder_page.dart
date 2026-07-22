@@ -29,20 +29,21 @@ import '../../domain/network/cellular_network_diagnostic.dart';
 import '../../domain/network/wifi_technical_assessment.dart';
 import '../../domain/network/wifi_assessment_rules.dart';
 import '../../domain/functional/functional_models.dart';
+import '../visual_report/data/visual_report_compatibility_adapter.dart';
+import '../visual_report/presentation/steps/visual_components_list_step_page.dart';
 
-class InspectionPlaceholderPage extends StatefulWidget {
-  const InspectionPlaceholderPage({
+class VisualReportPage extends StatefulWidget {
+  const VisualReportPage({
     required this.hydrantId,
     required this.type,
     super.key,
   });
   final String hydrantId, type;
   @override
-  State<InspectionPlaceholderPage> createState() =>
-      _InspectionPlaceholderPageState();
+  State<VisualReportPage> createState() => _VisualReportPageState();
 }
 
-class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
+class _VisualReportPageState extends State<VisualReportPage> {
   VisualInspection? inspection;
   bool loading = true, dirty = false, saving = false;
   bool locationCaptureRunning = false;
@@ -57,7 +58,8 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
     'Ubicación y georreferencia',
     'Acceso',
     'Medidor de caudal',
-    'Válvula reductora y solenoide',
+    'Componentes de red pública',
+    'Componentes de red privada',
     'Energía y comunicaciones',
     'Estado físico y daños',
     'Fotografías y cierre',
@@ -86,10 +88,11 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
       return;
     }
     final state = context.read<AppState>();
-    final value = await state.visualInspectionRepository.openOrCreate(
+    final stored = await state.visualInspectionRepository.openOrCreate(
       state.hydrant(widget.hydrantId),
       state.user,
     );
+    final value = const VisualReportCompatibilityAdapter().project(stored);
     await state.trace(
       'draft_recovered',
       'Borrador de ${ReportTypeLabels.visualFull} abierto',
@@ -106,6 +109,9 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
   }
 
   void _setSectionValue(String section, String key, Object? value) {
+    if (inspection?.status == InspectionStatus.completed) {
+      return;
+    }
     final json = inspection!.toJson();
     if (section == 'root') {
       json[key] = value;
@@ -113,6 +119,11 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
       final nested = Map<String, dynamic>.from(json[section] as Map? ?? {});
       nested[key] = value;
       json[section] = nested;
+    }
+    if (section == 'flowMeter') {
+      json['flowMeterComponentConfirmed'] = false;
+      json['flowMeterComponentReviewedBy'] = null;
+      json['flowMeterComponentReviewedAt'] = null;
     }
     json['updatedAt'] = DateTime.now().toUtc().toIso8601String();
     setState(() {
@@ -136,8 +147,11 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
   }
 
   Future<void> _save({int? nextStep}) async {
+    if (inspection?.status == InspectionStatus.completed) {
+      return;
+    }
     final state = context.read<AppState>();
-    if (inspection?.currentStep == 6 &&
+    if (inspection?.currentStep == 7 &&
         nextStep != null &&
         nextStep != 6 &&
         _cellularController?.isRunning == true) {
@@ -145,6 +159,9 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
     }
     setState(() => saving = true);
     final updated = inspection!.copyWith(
+      schemaVersion: inspection!.hydrantConfiguration == null
+          ? inspection!.schemaVersion
+          : 2,
       currentStep: nextStep ?? inspection!.currentStep,
     );
     await state.visualInspectionRepository.save(updated);
@@ -176,9 +193,9 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
   }
 
   void _scheduleCellularDiagnosticsIfNeeded() {
-    if (inspection?.currentStep != 6) return;
+    if (inspection?.currentStep != 7) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || inspection?.currentStep != 6) return;
+      if (!mounted || inspection?.currentStep != 7) return;
       _ensureCellularController();
       if (_cellularController!.diagnostic.status ==
           CellularDiagnosticStatus.idle) {
@@ -235,6 +252,14 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
   }
 
   Future<void> _back() async {
+    if (inspection?.status == InspectionStatus.completed) {
+      if (context.canPop()) {
+        context.pop();
+      } else {
+        context.go('/hydrants/${widget.hydrantId}');
+      }
+      return;
+    }
     if (dirty) {
       final leave =
           await showDialog<bool>(
@@ -288,7 +313,7 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
       );
       return;
     }
-    if (inspection!.currentStep < 8) {
+    if (inspection!.currentStep < 9) {
       await _save(nextStep: inspection!.currentStep + 1);
       return;
     }
@@ -307,7 +332,7 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
     final json = inspection!.toJson();
     json['status'] = InspectionStatus.completed.name;
     json['completedAt'] = DateTime.now().toUtc().toIso8601String();
-    json['currentStep'] = 8;
+    json['currentStep'] = 9;
     final completed = VisualInspection.fromJson(json);
     try {
       await state.visualInspectionRepository.finalize(completed);
@@ -379,7 +404,15 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
     }
     if (widget.type != 'a') return const _F02BPlaceholder();
     final value = inspection!;
-    final step = value.currentStep;
+    final step = value.status == InspectionStatus.completed &&
+            value.visualFlowVersion < 2
+        ? switch (value.currentStep) {
+            6 => 7,
+            7 => 8,
+            8 => 9,
+            _ => value.currentStep,
+          }
+        : value.currentStep;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
@@ -389,7 +422,7 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
         appBar: AppPageHeader(
           title: '${ReportTypeLabels.visualFull} · ${titles[step - 1]}',
           subtitle:
-              '${context.read<AppState>().hydrant(widget.hydrantId).code} · Paso $step de 8',
+              '${context.read<AppState>().hydrant(widget.hydrantId).code} · Paso $step de 9',
           actions: [
             Padding(
               padding: const EdgeInsets.only(right: 12),
@@ -415,7 +448,7 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
           },
           child: Column(
             children: [
-              LinearProgressIndicator(value: step / 8, color: AppColors.teal),
+              LinearProgressIndicator(value: step / 9, color: AppColors.teal),
               Expanded(
                 child: ListView(
                   controller: _scrollController,
@@ -428,6 +461,10 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
                       ),
                     _StepBody(
                       inspection: value,
+                      step: step,
+                      saveDraft: () => _save(),
+                      completeCurrentStep: _next,
+                      previousCurrentStep: _back,
                       setValue: _setSectionValue,
                       captureLocation: _captureLocation,
                       cellularDiagnostic: _cellularController?.diagnostic,
@@ -453,7 +490,8 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
                   ],
                 ),
               ),
-              SafeArea(
+              if (step != 5 && step != 6)
+                SafeArea(
                 top: false,
                 child: Container(
                   padding: const EdgeInsets.all(12),
@@ -477,7 +515,7 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
                             : FilledButton(
                                 onPressed: saving ? null : _next,
                                 child: Text(
-                                  step == 8
+                                  step == 9
                                       ? 'Finalizar ${ReportTypeLabels.visualFull}'
                                       : 'Guardar y continuar',
                                 ),
@@ -615,11 +653,15 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
       error = null;
     });
     try {
+      final componentId = category.startsWith('component:')
+          ? category.substring('component:'.length)
+          : null;
       final photo = await ReliablePhotoService().acquire(
         pickerSource: source,
         hydrantId: widget.hydrantId,
         inspectionId: inspection!.id,
         category: category,
+        componentId: componentId,
         userId: state.user.id,
         userName: state.user.fullName,
         brigadeId: state.user.brigadeId,
@@ -628,7 +670,20 @@ class _InspectionPlaceholderPageState extends State<InspectionPlaceholderPage> {
       if (photo != null) {
         final ids = [...inspection!.photoIds, photo.id];
         setState(() {
-          inspection = inspection!.copyWith(photoIds: ids);
+          inspection = inspection!.copyWith(
+            photoIds: ids,
+            componentInspections: componentId == null
+                ? inspection!.componentInspections
+                : [
+                    for (final component in inspection!.componentInspections)
+                      if (component.id == componentId)
+                        component.copyWith(
+                          photoIds: [...component.photoIds, photo.id],
+                        )
+                      else
+                        component,
+                  ],
+          );
           dirty = true;
         });
         await state.mediaBox.put(photo.id, photo.syncStatus.name);
@@ -1010,6 +1065,10 @@ class _AutomaticLocationPanel extends StatelessWidget {
 class _StepBody extends StatelessWidget {
   const _StepBody({
     required this.inspection,
+    required this.step,
+    required this.saveDraft,
+    required this.completeCurrentStep,
+    required this.previousCurrentStep,
     required this.setValue,
     required this.captureLocation,
     required this.cellularDiagnostic,
@@ -1019,6 +1078,10 @@ class _StepBody extends StatelessWidget {
     required this.deletePhoto,
   });
   final VisualInspection inspection;
+  final int step;
+  final Future<void> Function() saveDraft;
+  final Future<void> Function() completeCurrentStep;
+  final Future<void> Function() previousCurrentStep;
   final SetValue setValue;
   final VoidCallback captureLocation;
   final CellularNetworkDiagnostic? cellularDiagnostic;
@@ -1028,7 +1091,6 @@ class _StepBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final step = inspection.currentStep;
     final children = <Widget>[];
     switch (step) {
       case 1:
@@ -1192,66 +1254,112 @@ class _StepBody extends StatelessWidget {
           ]);
         }
       case 5:
-        children.addAll(
-          _equipment(
-            'pressureValve',
-            inspection.pressureValve.exists,
-            '¿Existe válvula reductora?',
+        children.add(
+          VisualComponentsListStepPage(
+            configuration: inspection.hydrantConfiguration!,
+            components: inspection.componentInspections,
+            victaulicGroup: inspection.victaulicGroupInspection,
+            section: VisualComponentsSection.publicNetwork,
+            flowMeterComplete:
+                inspection.flowMeter.exists != null &&
+                (inspection.flowMeter.exists != true ||
+                    (inspection.flowMeter.condition != null &&
+                        inspection.flowMeter.operation != null)),
+            flowMeterConfirmed: inspection.flowMeterComponentConfirmed,
+            initialIndex: inspection.publicComponentIndex,
+            readOnly: inspection.status == InspectionStatus.completed,
+            actorId: inspection.inspectorId,
+            onChanged: (values) async {
+              setValue(
+                'root',
+                'componentInspections',
+                values.map((e) => e.toJson()).toList(),
+              );
+              await saveDraft();
+            },
+            onVictaulicChanged: (group) async {
+              setValue('root', 'victaulicGroupInspection', group.toJson());
+              await saveDraft();
+            },
+            onComponentConfirmed: (componentId) => context.read<AppState>().trace(
+              'visual_component_confirmed',
+              'Componente de red pública confirmado',
+              hydrantId: inspection.hydrantId,
+              metadata: {'reportId': inspection.id, 'componentId': componentId},
+            ),
+            onFlowMeterConfirmed: () async {
+              final now = DateTime.now().toUtc();
+              setValue('root', 'flowMeterComponentConfirmed', true);
+              setValue('root', 'flowMeterComponentReviewedBy', inspection.inspectorId);
+              setValue('root', 'flowMeterComponentReviewedAt', now.toIso8601String());
+              await saveDraft();
+              await context.read<AppState>().trace(
+                'visual_flow_meter_summary_confirmed',
+                'Resumen canónico del medidor confirmado en red pública',
+                hydrantId: inspection.hydrantId,
+                metadata: {'reportId': inspection.id},
+              );
+            },
+            onIndexChanged: (index) async {
+              setValue('root', 'publicComponentIndex', index);
+              await saveDraft();
+            },
+            onStepCompleted: completeCurrentStep,
+            onPreviousStep: () async {
+              await previousCurrentStep();
+            },
+            onEditFlowMeter: () => setValue('root', 'currentStep', 4),
+            onCapturePhoto: capturePhoto,
           ),
         );
-        if (inspection.pressureValve.exists == true) {
-          children.addAll([
-            TextFormField(
-              initialValue: '${inspection.pressureValve.quantity}',
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Cantidad'),
-              onChanged: (v) =>
-                  setValue('pressureValve', 'quantity', int.tryParse(v) ?? 0),
-            ),
-            const Text('Condición física'),
-            _choices(
-              F02aCatalogs.conditions,
-              inspection.pressureValve.condition?.name,
-              (v) => setValue(
-                'pressureValve',
-                'condition',
-                PhysicalCondition.values[v].name,
-              ),
-            ),
-            TextFormField(
-              initialValue: inspection.pressureValve.leakageLevel,
-              decoration: const InputDecoration(labelText: 'Nivel de fuga'),
-              onChanged: (v) => setValue('pressureValve', 'leakageLevel', v),
-            ),
-            const Text('¿Existe solenoide?'),
-            _choices(
-              const ['Sí', 'No', 'No verificado'],
-              inspection.pressureValve.solenoidExists == null
-                  ? null
-                  : inspection.pressureValve.solenoidExists!
-                  ? 'Sí'
-                  : 'No',
-              (v) => setValue(
-                'pressureValve',
-                'solenoidExists',
-                v == 0
-                    ? true
-                    : v == 1
-                    ? false
-                    : null,
-              ),
-            ),
-            if (inspection.pressureValve.solenoidExists == true)
-              TextFormField(
-                initialValue: inspection.pressureValve.solenoidType,
-                decoration: const InputDecoration(
-                  labelText: 'Tipo de solenoide',
-                ),
-                onChanged: (v) => setValue('pressureValve', 'solenoidType', v),
-              ),
-          ]);
-        }
       case 6:
+        children.add(
+          VisualComponentsListStepPage(
+            configuration: inspection.hydrantConfiguration!,
+            components: inspection.componentInspections,
+            victaulicGroup: inspection.victaulicGroupInspection,
+            section: VisualComponentsSection.privateNetwork,
+            flowMeterComplete:
+                inspection.flowMeter.exists != null &&
+                (inspection.flowMeter.exists != true ||
+                    (inspection.flowMeter.condition != null &&
+                        inspection.flowMeter.operation != null)),
+            flowMeterConfirmed: inspection.flowMeterComponentConfirmed,
+            initialIndex: inspection.privateComponentIndex,
+            readOnly: inspection.status == InspectionStatus.completed,
+            actorId: inspection.inspectorId,
+            onChanged: (values) async {
+              setValue(
+                'root',
+                'componentInspections',
+                values.map((e) => e.toJson()).toList(),
+              );
+              await saveDraft();
+            },
+            onVictaulicChanged: (group) async {
+              setValue('root', 'victaulicGroupInspection', group.toJson());
+              await saveDraft();
+            },
+            onComponentConfirmed: (componentId) => context.read<AppState>().trace(
+              'visual_component_confirmed',
+              'Componente de red privada confirmado',
+              hydrantId: inspection.hydrantId,
+              metadata: {'reportId': inspection.id, 'componentId': componentId},
+            ),
+            onFlowMeterConfirmed: () async {},
+            onIndexChanged: (index) async {
+              setValue('root', 'privateComponentIndex', index);
+              await saveDraft();
+            },
+            onStepCompleted: completeCurrentStep,
+            onPreviousStep: () async {
+              await previousCurrentStep();
+            },
+            onEditFlowMeter: () => setValue('root', 'currentStep', 4),
+            onCapturePhoto: capturePhoto,
+          ),
+        );
+      case 7:
         final wifiAssessment = WifiTechnicalAssessment.fromJson(
           inspection.energyCommunication.wifiAssessment,
         );
@@ -1343,7 +1451,7 @@ class _StepBody extends StatelessWidget {
             style: TextStyle(fontSize: 11, color: AppColors.muted),
           ),
         ]);
-      case 7:
+      case 8:
         children.addAll([
           SwitchListTile(
             title: const Text('Sin daños visibles'),
@@ -1358,7 +1466,7 @@ class _StepBody extends StatelessWidget {
           ),
           ..._damageChecklist(context),
         ]);
-      case 8:
+      case 9:
         children.add(const Text('Fotografías obligatorias'));
         for (final category in _requiredPhotoCategories()) {
           final photos = _photosFor(category);
@@ -1436,7 +1544,7 @@ class _StepBody extends StatelessWidget {
           initial: _comments(step),
           onChanged: (v) => setValue(
             _section(step),
-            step == 8 ? 'finalComments' : 'comments',
+            step == 9 ? 'finalComments' : 'comments',
             v,
           ),
         ),
@@ -1813,6 +1921,7 @@ class _StepBody extends StatelessWidget {
     'access',
     'flowMeter',
     'pressureValve',
+    'pressureValve',
     'energyCommunication',
     'result',
     'result',
@@ -1823,8 +1932,9 @@ class _StepBody extends StatelessWidget {
     3 => inspection.access.comments,
     4 => inspection.flowMeter.comments,
     5 => inspection.pressureValve.comments,
-    6 => inspection.energyCommunication.comments,
-    7 => inspection.result.finalComments,
+    6 => inspection.pressureValve.comments,
+    7 => inspection.energyCommunication.comments,
+    8 => inspection.result.finalComments,
     _ => inspection.result.finalComments,
   };
 }
