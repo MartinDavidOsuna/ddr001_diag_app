@@ -541,7 +541,7 @@ class VisualVictaulicGroupInspection {
   final String componentInspectionId,material,comments; final int quantity; final VisualComponentCondition? commonCondition; final bool sameConditionForAll; final List<VisualJointInspection> individualJoints;
   VisualVictaulicGroupInspection copyWith({int? quantity,String? material,VisualComponentCondition? commonCondition,bool? sameConditionForAll,List<VisualJointInspection>? individualJoints,String? comments})=>VisualVictaulicGroupInspection(componentInspectionId:componentInspectionId,quantity:quantity??this.quantity,material:material??this.material,commonCondition:commonCondition??this.commonCondition,sameConditionForAll:sameConditionForAll??this.sameConditionForAll,individualJoints:individualJoints??this.individualJoints,comments:comments??this.comments);
   VisualVictaulicGroupInspection withQuantity(int next){
-    final safe=next.clamp(0,50) as int;
+    final safe=next.clamp(0,50);
     return copyWith(quantity:safe,individualJoints:[for(var index=0;index<safe;index++) if(index<individualJoints.length) individualJoints[index] else VisualJointInspection(id:const Uuid().v4(),number:index+1)]);
   }
   Map<String,dynamic> toJson()=>{'componentInspectionId':componentInspectionId,'quantity':quantity,'material':material,'commonCondition':commonCondition?.name,'sameConditionForAll':sameConditionForAll,'individualJoints':individualJoints.map((e)=>e.toJson()).toList(),'comments':comments};

@@ -1288,12 +1288,13 @@ class _StepBody extends StatelessWidget {
               metadata: {'reportId': inspection.id, 'componentId': componentId},
             ),
             onFlowMeterConfirmed: () async {
+              final appState = context.read<AppState>();
               final now = DateTime.now().toUtc();
               setValue('root', 'flowMeterComponentConfirmed', true);
               setValue('root', 'flowMeterComponentReviewedBy', inspection.inspectorId);
               setValue('root', 'flowMeterComponentReviewedAt', now.toIso8601String());
               await saveDraft();
-              await context.read<AppState>().trace(
+              await appState.trace(
                 'visual_flow_meter_summary_confirmed',
                 'Resumen canónico del medidor confirmado en red pública',
                 hydrantId: inspection.hydrantId,

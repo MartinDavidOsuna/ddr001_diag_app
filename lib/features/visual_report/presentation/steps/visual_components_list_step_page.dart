@@ -66,7 +66,7 @@ class _VisualComponentsListStepPageState
   void initState() {
     super.initState();
     final last = _sequence.length;
-    _index = widget.initialIndex.clamp(0, last) as int;
+    _index = widget.initialIndex.clamp(0, last);
   }
 
   @override

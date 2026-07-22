@@ -95,7 +95,9 @@ void main() {
         saved = values.first;
       },
     ));
-    await tester.tap(find.text('Confirmar componente y continuar'));
+    final confirmButton = find.text('Confirmar componente y continuar');
+    await tester.ensureVisible(confirmButton);
+    await tester.tap(confirmButton);
     await tester.pumpAndSettle();
     expect(saved?.explicitlyConfirmed, isTrue);
     expect(saved?.reviewedAt, isNotNull);
@@ -106,9 +108,17 @@ void main() {
     await tester.pumpWidget(
       _app(section: VisualComponentsSection.publicNetwork),
     );
-    await tester.tap(find.text('Ver índice de componentes'));
+    final indexButton = find.text('Ver índice de componentes');
+    await tester.ensureVisible(indexButton);
+    await tester.tap(indexButton);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Válvula de aire'));
+    final airValve = find.text('Válvula de aire');
+    await tester.scrollUntilVisible(
+      airValve,
+      200,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(airValve);
     await tester.pumpAndSettle();
     expect(find.text('Válvula de aire'), findsOneWidget);
   });
